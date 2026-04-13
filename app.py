@@ -88,5 +88,8 @@ def clear_history():
 
 if __name__ == "__main__":
     print("🚀 Travel Bot Starting...")
-    print(f"📍 Visit: http://localhost:5000")
-    app.run(debug=DEBUG_MODE, port=5000)
+
+    port = int(os.environ.get("PORT", 5000))  # 👈 Render PORT
+    debug = str(DEBUG_MODE).lower() == "true"
+
+    app.run(host="0.0.0.0", port=port, debug=debug)
