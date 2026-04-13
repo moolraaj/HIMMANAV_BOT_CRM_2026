@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Travel Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .chat-container {
+            width: 90%;
+            max-width: 700px;
+            height: 90vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .chat-header h1 {
+            font-size: 22px;
+        }
+
+        .chat-header p {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-items: flex-end;
+        }
+
+        .message.bot {
+            align-items: flex-start;
+        }
+
+        .message-content {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .bot .message-content {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .buttons-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+            max-width: 80%;
+        }
+
+        .chat-button {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: transform 0.2s;
+        }
+
+        .chat-button:hover {
+            transform: translateY(-2px);
+        }
+
+        .chat-input-container {
+            padding: 15px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .chat-input:focus {
+            border-color: #667eea;
+        }
+
+        .send-button {
+            padding: 12px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .send-button:hover {
+            opacity: 0.9;
+        }
+
+        .typing {
+            display: none;
+            padding: 10px 15px;
+            background: white;
+            border-radius: 18px;
+            width: fit-content;
+            margin-bottom: 15px;
+        }
+
+        .typing span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #999;
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.5;
+            }
+            30% {
+                transform: translateY(-8px);
+                opacity: 1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .message-content, .buttons-container {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>✈️ Travel Assistant</h1>
+            <p>Your personal travel planner</p>
+        </div>
+        
+        <div class="chat-messages" id="messages">
+            <div class="message bot">
+                <div class="message-content">
+                    👋 Hi there! I'm your travel assistant. How can I help you with your travel journey today?
+                </div>
+                <div class="buttons-container">
+                    <button class="chat-button" onclick="sendButtonValue('find_by_location')">📍 Find by Location</button>
+                    <button class="chat-button" onclick="sendButtonValue('find_by_budget')">💰 Find by Budget</button>
+                    <button class="chat-button" onclick="sendButtonValue('find_by_activity')">🎯 Find by Activity</button>
+                    <button class="chat-button" onclick="sendButtonValue('show_all')">📦 Show All Packages</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="typing" id="typing">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+        
+        <div class="chat-input-container">
+            <input type="text" class="chat-input" id="input" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+            <button class="send-button" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        function addMessage(content, sender, buttons = []) {
+    const messagesDiv = document.getElementById('messages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}`;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+    contentDiv.innerHTML = content.replace(/\n/g, '<br>');
+    messageDiv.appendChild(contentDiv);
+    
+    // Add buttons if they exist
+    if (buttons && buttons.length > 0) {
+        console.log(`Adding ${buttons.length} buttons`); // Debug log
+        const buttonsDiv = document.createElement('div');
+        buttonsDiv.className = 'buttons-container';
+        buttons.forEach(btn => {
+            const button = document.createElement('button');
+            button.className = 'chat-button';
+            button.textContent = btn.text;
+            button.onclick = () => sendButtonValue(btn.value);
+            buttonsDiv.appendChild(button);
+        });
+        messageDiv.appendChild(buttonsDiv);
+    }
+    
+    messagesDiv.appendChild(messageDiv);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+        async function sendButtonValue(value) {
+            addMessage(value, 'user');
+            await sendToServer(value);
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage(message, 'user');
+            input.value = '';
+            await sendToServer(message);
+        }
+
+ async function sendToServer(message) {
+    const typing = document.getElementById('typing');
+    typing.style.display = 'block';
+    
+    try {
+        const response = await fetch('/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message })
+        });
+        
+        const data = await response.json();
+        typing.style.display = 'none';
+        
+        if (data.success) {
+            console.log("Response type:", data.type);
+            console.log("Buttons:", data.buttons);
+            // Pass the buttons array to addMessage
+            addMessage(data.content, 'bot', data.buttons || []);
+        } else {
+            addMessage('Sorry, something went wrong. Please try again.', 'bot');
+        }
+    } catch (error) {
+        typing.style.display = 'none';
+        addMessage('Network error. Please check your connection.', 'bot');
+        console.error('Error:', error);
+    }
+}
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+    </script>
+</body>
+</html>

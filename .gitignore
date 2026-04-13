@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+env/
+.venv/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Environment variables
+.env
+
+# PythonAnywhere / local stuff
+*.sqlite3
