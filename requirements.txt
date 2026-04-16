@@ -6,4 +6,7 @@ gunicorn
 redis
 httpx
 groq
+flask-cors
+pymongo
+reportlab
 
