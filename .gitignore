@@ -18,3 +18,5 @@ env/
 
 # PythonAnywhere / local stuff
 *.sqlite3
+
+# ngrok config add-authtoken TOKEN
