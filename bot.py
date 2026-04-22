@@ -2,7 +2,7 @@
 
 from services.api import fetch_packages, fetch_hotels
 from services.email_service import send_admin_booking_alert
-from services.pdf_generator import generate_package_pdf
+from services.pdf_generator import download_pdf_from_url, send_pdf_via_whatsapp
 from services.llm import (
     generate_activities_list,
     generate_vehicles_list,
@@ -1312,30 +1312,37 @@ def _handle_download_pdf(user_input, state):
         if not selected:
             return {"type": "text", "content": "❌ Package not found."}
 
-        pkg_name = clean_text(selected.get('package_name', 'Package'))
-        context = state.get("context", {})
+        pkg_name = selected.get('package_name', 'Package')
+        
+        # Get PDF URL directly from the package data (already in state)
+        pdf_url = selected.get('pdf')
+        
+        if not pdf_url or pdf_url == "":
+            return {
+                "type": "buttons",
+                "content": "⚠️ *PDF not available for this package.*\n\nThe PDF may not have been generated yet. Please contact support.",
+                "buttons": [
+                    {"text": "🏠 Main Menu", "value": "main_menu"},
+                ]
+            }
+        
         user_phone = state.get("user_phone", "")
-
-        user_info = {
-            "phone": user_phone,
-            "travel_dates": context.get("travel_dates", ""),
-            "travelers": context.get("travellers", ""),
-            "destinations": context.get("destinations", [])
-        }
-
-        pdf_path = generate_package_pdf(selected, user_info)
+        
+        # Use the direct download function
+        from services.pdf_generator import download_pdf_from_url, send_pdf_via_whatsapp
+        
+        pdf_path = download_pdf_from_url(pdf_url, pkg_name)
 
         if not pdf_path or not os.path.exists(pdf_path):
             return {
                 "type": "buttons",
-                "content": "⚠️ *PDF generation failed.*",
+                "content": "⚠️ *Failed to download PDF. Please try again.*",
                 "buttons": [
                     {"text": "🔄 Try Again", "value": f"download_pdf_{pkg_id}"},
                     {"text": "🏠 Main Menu", "value": "main_menu"},
                 ]
             }
 
-        from services.pdf_generator import send_pdf_via_whatsapp
         result = send_pdf_via_whatsapp(user_phone, pdf_path, f"📄 {pkg_name} - Travel Package Details")
 
         if result:
@@ -1358,7 +1365,7 @@ def _handle_download_pdf(user_input, state):
         else:
             return {
                 "type": "buttons",
-                "content": "⚠️ *Failed to send PDF.*",
+                "content": "⚠️ *Failed to send PDF. Please try again.*",
                 "buttons": [
                     {"text": "🔄 Try Again", "value": f"download_pdf_{pkg_id}"},
                     {"text": "🏠 Main Menu", "value": "main_menu"},
@@ -1367,6 +1374,8 @@ def _handle_download_pdf(user_input, state):
 
     except Exception as e:
         print(f"❌ PDF error: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "type": "buttons",
             "content": "⚠️ *PDF error. Please try again.*",
