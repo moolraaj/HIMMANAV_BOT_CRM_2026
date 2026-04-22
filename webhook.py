@@ -1,85 +1,90 @@
-# webhook.py
+# webhook.py  — clean final version
+
 from flask import Flask, request, jsonify
-import json
-import os
+import json, os, logging
 from dotenv import load_dotenv
 from flask_cors import CORS
 
-# Import from chats folder
 from chats.routes import register_chat_routes
 from chats.delete_routes import register_delete_routes
 from chats.message_handler import process_incoming_message
+from chats.queue_manager import user_queue_manager
 
 load_dotenv('.env')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
 
 app = Flask(__name__)
-
-# Configure CORS
-CORS(app, 
-     resources={r"/*": {"origins": "*"}}, 
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning", "X-Requested-With"])
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"])
 
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers.update({
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, ngrok-skip-browser-warning',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Credentials': 'true',
+    })
     return response
 
-# Register all routes from chats folder
 register_chat_routes(app)
 register_delete_routes(app)
 
-# =========================
-# VERIFY WEBHOOK
-# =========================
+
 @app.route('/webhook', methods=['GET'])
 def verify_webhook():
     mode = request.args.get('hub.mode')
     token = request.args.get('hub.verify_token')
     challenge = request.args.get('hub.challenge')
-    
     if mode == 'subscribe' and token == VERIFY_TOKEN:
         return challenge, 200
     return "Verification failed", 403
 
-# =========================
-# RECEIVE WHATSAPP MESSAGE
-# =========================
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📨 Incoming:", json.dumps(data)[:500])
-    
+    logger.debug(f"📨 Incoming: {json.dumps(data)[:300]}")
+
     if 'entry' in data:
         for entry in data['entry']:
             for change in entry.get('changes', []):
                 value = change.get('value', {})
-                if 'messages' in value:
-                    message_data = value['messages'][0]
-                    process_incoming_message(message_data)
-    
+
+                # FIX: iterate ALL messages, not just [0]
+                for message_data in value.get('messages', []):
+                    phone = message_data.get('from', 'unknown')
+                    user_queue_manager.enqueue(
+                        phone=phone,
+                        message_data=message_data,
+                        handler_fn=process_incoming_message
+                    )
+
     return jsonify({"status": "ok"}), 200
 
-# =========================
-# HEALTH CHECK
-# =========================
+
 @app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
     if request.method == 'OPTIONS':
         return '', 200
-    return jsonify({"status": "ok", "healthy": True})
+    stats = user_queue_manager.stats()
+    return jsonify({"status": "ok", "healthy": True, "queue": stats})
 
-# =========================
-# RUN APP
-# =========================
+
+@app.route('/queue/stats', methods=['GET'])
+def queue_stats():
+    """Monitoring endpoint — see active users + queue depths"""
+    return jsonify(user_queue_manager.stats())
+
+
 if __name__ == '__main__':
-    print("🚀 WhatsApp Bot Running...")
-    print("✅ CORS enabled")
-    print("📁 Routes loaded from chats/ folder")
-    app.run(port=5000, debug=True, host='0.0.0.0')
+    logger.info("🚀 WhatsApp Bot starting...")
+    app.run(port=5000, debug=False, host='0.0.0.0')

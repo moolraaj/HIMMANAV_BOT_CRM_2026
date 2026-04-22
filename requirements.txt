@@ -10,4 +10,5 @@ flask-cors
 pymongo
 reportlab
 aiohttp
+Pillow
 
