@@ -1,13 +1,14 @@
 # services/pdf_generator.py
+
 import os
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from database.database import get_whatsapp_config, get_all_active_whatsapp_numbers
 
 load_dotenv('.env')
 
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
-PHONE_NUMBER_ID = os.getenv('PHONE_NUMBER_ID')
 
 
 def download_pdf_from_url(pdf_url, package_name):
@@ -40,11 +41,29 @@ def download_pdf_from_url(pdf_url, package_name):
         return None
 
 
-def upload_pdf_to_whatsapp(pdf_path):
-    """Upload PDF to WhatsApp Cloud API and get media ID"""
+def upload_pdf_to_whatsapp(pdf_path, sender_phone_number_id):
+    """
+    Upload PDF to WhatsApp Cloud API and get media ID
+    Uses sender_phone_number_id to determine which number to upload from
+    """
     try:
-        url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/media"
-
+        # Get sender config from database
+        sender_config = get_whatsapp_config(sender_phone_number_id)
+        
+        if not sender_config:
+            print(f"❌ No config found for sender: {sender_phone_number_id}")
+            # Try to get first active number as fallback
+            active_numbers = get_all_active_whatsapp_numbers()
+            if active_numbers:
+                fallback_id = active_numbers[0]["phone_number_id"]
+                print(f"⚠️ Using fallback sender: {fallback_id}")
+                sender_config = get_whatsapp_config(fallback_id)
+            else:
+                print(f"❌ No active WhatsApp numbers found in database")
+                return None
+        
+        url = f"https://graph.facebook.com/v18.0/{sender_config['phone_number_id']}/media"
+        
         with open(pdf_path, 'rb') as f:
             files = {
                 'file': (os.path.basename(pdf_path), f, 'application/pdf'),
@@ -59,7 +78,7 @@ def upload_pdf_to_whatsapp(pdf_path):
                 print(f"✅ PDF uploaded, Media ID: {media_id}")
                 return media_id
             else:
-                print(f"❌ Upload failed: {response.text}")
+                print(f"❌ Upload failed: {response.status_code} - {response.text}")
                 return None
 
     except Exception as e:
@@ -67,15 +86,40 @@ def upload_pdf_to_whatsapp(pdf_path):
         return None
 
 
-def send_pdf_via_whatsapp(to_phone, pdf_path, caption=""):
-    """Send PDF file to WhatsApp user"""
+def send_pdf_via_whatsapp(to_phone, pdf_path, caption="", sender_phone_number_id=None):
+    """
+    Send PDF file to WhatsApp user
+    Args:
+        to_phone: Recipient's phone number
+        pdf_path: Path to PDF file
+        caption: Optional caption text
+        sender_phone_number_id: Which WhatsApp number to send FROM
+    """
     try:
-        media_id = upload_pdf_to_whatsapp(pdf_path)
+        # If no sender_id provided, get first active number from DB
+        if not sender_phone_number_id:
+            active_numbers = get_all_active_whatsapp_numbers()
+            if active_numbers:
+                sender_phone_number_id = active_numbers[0]["phone_number_id"]
+                print(f"⚠️ No sender_id provided, using: {sender_phone_number_id}")
+            else:
+                print("❌ No active WhatsApp numbers found in database")
+                return None
+        
+        # Upload PDF to WhatsApp
+        media_id = upload_pdf_to_whatsapp(pdf_path, sender_phone_number_id)
 
         if not media_id:
             return None
 
-        url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+        # Get sender config for message URL
+        sender_config = get_whatsapp_config(sender_phone_number_id)
+        if not sender_config:
+            print(f"❌ No config found for sender: {sender_phone_number_id}")
+            return None
+
+        # Send the PDF message
+        url = f"https://graph.facebook.com/v18.0/{sender_config['phone_number_id']}/messages"
         headers = {
             "Authorization": f"Bearer {ACCESS_TOKEN}",
             "Content-Type": "application/json"
@@ -92,13 +136,13 @@ def send_pdf_via_whatsapp(to_phone, pdf_path, caption=""):
             }
         }
 
-        response = requests.post(url, headers=headers, json=data)
+        response = requests.post(url, headers=headers, json=data, timeout=30)
 
         if response.status_code == 200:
             print(f"✅ PDF sent successfully to {to_phone}")
             return response.json()
         else:
-            print(f"❌ Failed to send PDF: {response.text}")
+            print(f"❌ Failed to send PDF: {response.status_code} - {response.text}")
             return None
 
     except Exception as e:

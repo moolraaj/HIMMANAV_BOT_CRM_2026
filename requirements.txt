@@ -11,4 +11,6 @@ pymongo
 reportlab
 aiohttp
 Pillow
+flask_socketio
+eventlet
 

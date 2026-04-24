@@ -10,7 +10,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 
 def understand_user(user_input, conversation_context=None):
-    """Understand what user wants using LLM with conversation context"""
+    """Understand what user wants using LLM"""
     try:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -24,30 +24,22 @@ def understand_user(user_input, conversation_context=None):
 Conversation Context: {context_str}
 User message: "{user_input}"
 
-Analyze this message and return ONLY valid JSON (no extra text, no markdown):
+Analyze this message and return ONLY valid JSON:
 
 {{
-  "intent": "greeting or requirement_answer or search_packages or followup or chitchat or connect_ceo",
-  "requirement_type": "dates or duration or travelers or destination or null",
-  "requirement_value": "extracted value or null",
-  "price": "lowest or highest or any",
-  "locations": ["list", "of", "destinations"] or null,
-  "package_name": "specific package name or null",
-  "followup_type": "itinerary or hotels or activities or vehicles or inclusions or exclusions or null",
-  "chitchat_reply": "friendly response if intent is chitchat",
-  "is_complete": true or false
+  "intent": "greeting or chitchat or unclear",
+  "chitchat_reply": "friendly helpful response"
 }}
 
-Rules:
-- If user provides travel dates → intent="requirement_answer", requirement_type="dates"
-- If user provides duration (days/nights) → intent="requirement_answer", requirement_type="duration"
-- If user provides number of people → intent="requirement_answer", requirement_type="travelers"
-- If user provides destination preferences → intent="requirement_answer", requirement_type="destination"
-- If user says "find packages" or "show me packages" → intent="search_packages"
-- If user asks about itinerary/hotels/activities → intent="followup"
-- If user says "connect to agent" → intent="connect_ceo"
-- For greetings, respond warmly
-- For chitchat, respond helpfully
+RULES:
+- If user says random/gibberish like "lul", "asdf", "haha" → intent="chitchat", reply with friendly travel guidance
+- If user says something unclear → intent="unclear", reply asking them to clarify
+- Keep replies simple, helpful, and focused on travel assistance
+
+EXAMPLES:
+- "lul" → "I'm here to help with travel! You can ask about packages, hotels, or booking."
+- "haha" → "Glad you're enjoying! Need help finding a package or hotel?"
+- "ok" → "Great! Let me know if you need help with anything travel related."
 """
 
         body = {
@@ -59,21 +51,17 @@ Rules:
         response = requests.post(url, headers=headers, json=body, timeout=15)
 
         if response.status_code == 200:
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            content = response.json()["choices"][0]["message"]["content"]
             content = re.sub(r'```json\s*', '', content)
             content = re.sub(r'```\s*', '', content)
             content = content.strip()
-            parsed = json.loads(content)
-            print(f"🧠 LLM Intent: {parsed}")
-            return parsed
+            return json.loads(content)
 
-        print(f"⚠️ Groq API error: {response.status_code}")
-        return _default_intent()
+        return {"intent": "unclear", "chitchat_reply": "I didn't understand. Can you please tell me what you'd like to do?"}
 
     except Exception as e:
-        print(f"❌ LLM error: {e}")
-        return _default_intent()
+        print(f"LLM error: {e}")
+        return {"intent": "unclear", "chitchat_reply": "Sorry, I didn't get that. How can I help with your travel plans?"}
 
 
 def extract_travel_dates_llm(user_input):
@@ -143,86 +131,6 @@ Be intelligent and handle any date format the user provides.
     except Exception as e:
         print(f"❌ LLM date extraction error: {e}")
         return {"valid": False, "error": "Please provide your travel dates", "has_end_date": False}
-
-
-def extract_duration_llm(user_input):
-    """
-    Extract tour duration (days and nights) from user input.
-    Max allowed: 60 days / 60 nights.
-    """
-    try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        prompt = f"""
-Extract the tour duration from the user input: "{user_input}"
-
-The user may express duration in various ways:
-- "5 days 4 nights"
-- "7 days"
-- "3 nights"
-- "a week" → 7 days 6 nights
-- "10D 9N" or "10d9n"
-- "2 days 2 nights"
-- "one day"
-- "4 days only"
-
-Return ONLY valid JSON (no other text):
-
-{{
-  "valid": true or false,
-  "days": number or null,
-  "nights": number or null,
-  "error": "error message if invalid",
-  "interpretation": "how you interpreted the input"
-}}
-
-Rules:
-- If user provides only days and no nights → nights = days - 1 (minimum 0)
-- If user provides only nights and no days → days = nights + 1
-- If user provides both → use as given
-- "a week" → days=7, nights=6
-- "a weekend" → days=2, nights=1
-- Maximum allowed: 60 days and 60 nights
-- If number exceeds 60 → valid=false, error="Duration cannot exceed 60 days/nights"
-- Minimum: 1 day
-- If user provides nonsense or no duration → valid=false with helpful error
-
-Examples:
-- "5 days 4 nights" → {{"valid": true, "days": 5, "nights": 4}}
-- "7 days" → {{"valid": true, "days": 7, "nights": 6}}
-- "3 nights" → {{"valid": true, "days": 4, "nights": 3}}
-- "a week" → {{"valid": true, "days": 7, "nights": 6}}
-- "10D 9N" → {{"valid": true, "days": 10, "nights": 9}}
-- "100 days" → {{"valid": false, "error": "Duration cannot exceed 60 days/nights"}}
-- "hello" → {{"valid": false, "error": "Please tell me your tour duration (e.g. 5 days 4 nights)"}}
-"""
-
-        body = {
-            "model": "llama-3.3-70b-versatile",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1
-        }
-
-        response = requests.post(url, headers=headers, json=body, timeout=15)
-
-        if response.status_code == 200:
-            content = response.json()["choices"][0]["message"]["content"]
-            content = re.sub(r'```json\s*', '', content)
-            content = re.sub(r'```\s*', '', content)
-            content = content.strip()
-            result = json.loads(content)
-            print(f"⏳ LLM duration extraction: {result}")
-            return result
-
-        return {"valid": False, "error": "Technical error, please try again"}
-
-    except Exception as e:
-        print(f"❌ LLM duration extraction error: {e}")
-        return {"valid": False, "error": "Please tell me your tour duration (e.g. 5 days 4 nights)"}
 
 
 def extract_travelers_llm(user_input):

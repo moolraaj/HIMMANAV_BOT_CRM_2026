@@ -1,3 +1,7 @@
+
+
+
+
 # utils.py
 
 import re
@@ -6,19 +10,17 @@ from datetime import datetime
 PACKAGES_PER_PAGE = 2
 
 def calculate_per_person_price(package_price, adults, children):
-    """Calculate per person price based on travelers"""
     try:
         total_price = float(package_price) if package_price else 0
         total_people = adults + (children * 0.5)
         if total_people > 0:
             per_person = total_price / total_people
-            return f"₹{int(per_person):,}"
+            return f"{int(per_person):,}"
     except:
         pass
     return "Contact for price"
 
 def clean_text(text):
-    """Clean text by removing special characters and extra spaces"""
     if not text:
         return ""
     text = re.sub(r'\s+', ' ', str(text))
@@ -26,7 +28,6 @@ def clean_text(text):
     return text.strip()
 
 def clean_itinerary_text(text):
-    """Clean itinerary text by removing HTML tags and formatting properly"""
     if not text:
         return ""
     cleaned = re.sub(r'<[^>]+>', '\n', text)
@@ -43,17 +44,16 @@ def clean_itinerary_text(text):
         if not line:
             continue
         line = re.sub(r'\s+', ' ', line)
-        line = re.sub(r'[•●■]', '•', line)
+        line = re.sub(r'[•●■]', '-', line)
         lines.append(line)
     return '\n'.join(lines)
 
 def format_itinerary_for_display(itinerary_items):
-    """Format itinerary items for display in WhatsApp"""
     if not itinerary_items:
-        return "📅 *Itinerary:*\nContact us for detailed itinerary."
+        return "Itinerary:\nContact us for detailed itinerary."
 
     formatted = []
-    formatted.append("📅 *COMPLETE ITINERARY:*")
+    formatted.append("COMPLETE ITINERARY:")
     formatted.append("")
 
     if isinstance(itinerary_items, str):
@@ -65,7 +65,7 @@ def format_itinerary_for_display(itinerary_items):
                 day_num = parts[i]
                 title = parts[i + 1].strip()
                 content = parts[i + 2].strip()
-                formatted.append(f"*Day {day_num}: {title}*")
+                formatted.append(f"Day {day_num}: {title}")
                 formatted.append("")
                 bullet_points = re.findall(r'[•●\-]\s*([^\n]+)', content)
                 if not bullet_points:
@@ -76,9 +76,8 @@ def format_itinerary_for_display(itinerary_items):
                 for point in bullet_points:
                     point = re.sub(r'\s+', ' ', point.strip())
                     if point:
-                        formatted.append(f"  • {point}")
+                        formatted.append(f"  - {point}")
                 formatted.append("")
-                formatted.append("━━━━━━━━━━━━━━━━━━━━━━")
                 formatted.append("")
         return '\n'.join(formatted)
 
@@ -91,31 +90,28 @@ def format_itinerary_for_display(itinerary_items):
                 title = f"Day {idx}"
                 description = str(day)
             clean_desc = clean_itinerary_text(description)
-            formatted.append(f"*Day {idx}: {title}*")
+            formatted.append(f"Day {idx}: {title}")
             formatted.append("")
             if clean_desc:
                 for line in clean_desc.split('\n'):
                     if line.strip():
-                        if not line.startswith('•'):
-                            formatted.append(f"  • {line.strip()}")
+                        if not line.startswith('-'):
+                            formatted.append(f"  - {line.strip()}")
                         else:
                             formatted.append(f"  {line.strip()}")
             formatted.append("")
-            formatted.append("━━━━━━━━━━━━━━━━━━━━━━")
             formatted.append("")
         return '\n'.join(formatted)
 
     return str(itinerary_items)
 
 def safe_price(pkg):
-    """Safely extract price from package"""
     try:
         return int(pkg.get("package_price", 0))
     except (ValueError, TypeError):
         return 0
 
 def filter_packages_by_destinations(packages, destinations):
-    """Filter packages by destination list"""
     if not destinations or not packages:
         return []
 
@@ -151,7 +147,6 @@ def filter_packages_by_destinations(packages, destinations):
     return matched
 
 def filter_hotels_by_destinations(hotels, destinations):
-    """Filter hotels by destination list"""
     if not destinations or not hotels:
         return []
 
@@ -185,42 +180,32 @@ def filter_hotels_by_destinations(hotels, destinations):
     return matched
 
 def create_summary(context):
-    """Create travel summary text"""
     travel_dates = context.get("travel_dates", "Not specified")
     travellers = context.get("travellers", "Not specified")
     destinations = context.get("destinations", [])
     dest_text = ", ".join(destinations) if isinstance(destinations, list) else str(destinations)
-    duration = context.get("duration_text", "")
 
     lines = [
-        "📋 *Your Travel Plan:*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        f"📅 *Dates:* {travel_dates}",
+        "Your Travel Plan:",
+        f"Dates: {travel_dates}",
+        f"Travelers: {travellers}",
+        f"Destination: {dest_text}"
     ]
-    if duration:
-        lines.append(f"⏳ *Duration:* {duration}")
-    lines.append(f"👥 *Travelers:* {travellers}")
-    lines.append(f"🗺️ *Destination:* {dest_text}")
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
 def get_next_batch(items, current_page, items_per_page=PACKAGES_PER_PAGE):
-    """Get next batch of items for pagination"""
     start_idx = current_page * items_per_page
     end_idx = start_idx + items_per_page
     return items[start_idx:end_idx]
 
 def has_more_items(items, current_page, items_per_page=PACKAGES_PER_PAGE):
-    """Check if there are more items to load"""
     return (current_page + 1) * items_per_page < len(items)
 
 def get_remaining_count(items, current_page, items_per_page=PACKAGES_PER_PAGE):
-    """Get count of remaining items"""
     total_shown = (current_page + 1) * items_per_page
     return max(0, len(items) - total_shown)
 
 def build_navigation_buttons(has_more, remaining_count, items_per_page=PACKAGES_PER_PAGE):
-    """Build navigation buttons based on remaining items"""
     nav_buttons = []
 
     if has_more:
@@ -237,15 +222,14 @@ def build_navigation_buttons(has_more, remaining_count, items_per_page=PACKAGES_
     return nav_buttons
 
 def validate_dates(start_date, end_date):
-    """Validate travel dates"""
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     max_allowed_date = today.replace(year=today.year + 2)
 
     if start_date and start_date < today:
-        return False, f"*{start_date.strftime('%d %B %Y')}* is already in the past!"
+        return False, f"{start_date.strftime('%d %B %Y')} is already in the past!"
 
     if start_date and start_date > max_allowed_date:
-        return False, f"*{start_date.strftime('%d %B %Y')}* is too far in the future!"
+        return False, f"{start_date.strftime('%d %B %Y')} is too far in the future!"
 
     if end_date and start_date and start_date > end_date:
         return False, "Start date is after end date!"
@@ -253,7 +237,6 @@ def validate_dates(start_date, end_date):
     return True, None
 
 def validate_duration(days, nights):
-    """Validate tour duration — max 60 days and 60 nights"""
     if days is not None:
         if days < 1:
             return False, "Days must be at least 1."
@@ -267,7 +250,6 @@ def validate_duration(days, nights):
     return True, None
 
 def create_new_state(old_state, step, context):
-    """Create new state preserving all important keys"""
     return {
         "step": step,
         "search_mode": old_state.get("search_mode", "package"),
@@ -283,13 +265,7 @@ def create_new_state(old_state, step, context):
     }
 
 def create_fresh_state(old_state):
-    """
-    Create a fresh search state — but KEEP location/context so the session
-    is not broken. Only clears search-specific context (dates, pax, duration)
-    while preserving destinations and cached packages/hotels.
-    """
     old_context = old_state.get("context", {})
-    
     preserved_context = {}
     if old_context.get("destinations"):
         preserved_context["destinations"] = old_context["destinations"]
@@ -309,7 +285,6 @@ def create_fresh_state(old_state):
     }
 
 def create_exit_state(old_state):
-    """Create exit state — completely reset the session"""
     return {
         "step": "greeting",
         "context": {},
