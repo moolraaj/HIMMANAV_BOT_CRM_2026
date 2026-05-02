@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 load_dotenv('.env')
 
- 
 
 # Agent active sessions (for human takeover)
 agent_active_sessions = {}
@@ -38,27 +37,32 @@ def _serialize_response(response):
             "type": "text",
             "content": response.get("content", "")
         })
-    elif msg_type == "buttons":
+
+    elif msg_type in ("buttons", "buttons_grid"):
+        # Both button types stored the same way — type is preserved so the
+        # frontend and sender can distinguish them.
         return json.dumps({
-            "type": "buttons",
+            "type": msg_type,
             "content": response.get("content", ""),
             "buttons": response.get("buttons", [])
         })
+
     elif msg_type == "image":
         return json.dumps({
             "type": "image",
             "content": response.get("content", ""),
             "caption": response.get("caption", "")
         })
+
     elif msg_type == "multi":
         clean_responses = []
         for r in response.get("responses", []):
             sub_type = r.get("type", "text")
             if sub_type == "text":
                 clean_responses.append({"type": "text", "content": r.get("content", "")})
-            elif sub_type == "buttons":
+            elif sub_type in ("buttons", "buttons_grid"):
                 clean_responses.append({
-                    "type": "buttons",
+                    "type": sub_type,
                     "content": r.get("content", ""),
                     "buttons": r.get("buttons", [])
                 })
@@ -71,6 +75,7 @@ def _serialize_response(response):
             else:
                 clean_responses.append({"type": sub_type, "content": r.get("content", "")})
         return json.dumps({"type": "multi", "responses": clean_responses})
+
     else:
         return json.dumps({
             "type": msg_type,
@@ -93,6 +98,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
         if interactive['type'] == 'button_reply':
             user_message = interactive['button_reply']['id']
         elif interactive['type'] == 'list_reply':
+            # ── FIX: handle list_reply (comes from buttons_grid list messages) ──
             user_message = interactive['list_reply']['id']
     elif 'button' in message_data:
         user_message = message_data['button']['payload']
