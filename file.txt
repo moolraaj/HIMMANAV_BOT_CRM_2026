@@ -1,0 +1,482 @@
+HOTELS
+__basic informations__
+
+    name
+    hotel category
+    location
+    image
+    description
+    galleries
+
+__contact details__
+
+    email address
+    phone number
+
+__rooms__
+
+    room category
+    room type
+    room images
+    room min capacity 
+    room max capacity
+    base price  season\off season  
+    extra person price  season\off season  
+
+__meal plan__  
+
+    MAP|CP|EP
+    season / off season (per person)
+
+
+TRANSPOTATION
+    vehicle category
+    image
+    name
+    description
+    price season/off season
+
+
+ACTIVITIES
+
+    price (per person)
+    name
+    description
+    image
+
+
+
+PACKAGE
+    name
+    image
+    category
+    type
+    description
+    package margin(%|manual)
+    vehicles
+    activities
+    location
+    inclusions
+    exclusions
+
+    itenery
+    number of days
+    title
+    overview
+    image
+    stay location (for checkbox)
+    vehicle (yes/no)
+
+
+PROMPTS TO THE LLM 
+    destination
+    date of the going
+    people for the travelling
+    days plan
+    hotel type
+    transportation
+    activities
+
+
+
+
+WORDPRESS APIS
+
+get all hotels
+
+wp-json/hm/v1/hotels?phone=919816440734
+
+get hotels by their own categories and types
+
+/wp-json/hm/v1/hotel-categories?phone=919816440734
+/wp-json/hm/v1/hotel-types?phone=919816440734
+
+
+get rooms by their types and categories
+
+wp-json/hm/v1/room-types?phone=919816440734&type=suite-room
+wp-json/hm/v1/room-categories?phone=919816440734&category=luxury-room
+
+get location wise hotels,packages & both
+
+get all locations
+
+wp-json/hm/v1/locations
+
+get single location by their slug 
+
+wp-json/hm/v1/location?slug=shimla
+
+get location wise hotels number is required in params and location too
+
+wp-json/hm/v1/location?slug=shimla&phone=919816440734&include=hotels
+
+same for the packages
+
+wp-json/hm/v1/location?slug=shimla&phone=919816440734&include=packages
+
+
+get all vehicles
+
+/wp-json/hm/v1/vehicle?phone=919816440734
+/wp-json/hm/v1/vehicle?phone=919816440734&include=bike
+
+
+get all and single package
+
+/wp-json/hm/v1/packages?phone=919816440734&include=meghalaya-kaziranga-backpacking-trip-forests-falls-safari-6n-7d
+/wp-json/hm/v1/packages?phone=919816440734
+
+get all season
+
+wp-json/hm/v1/seasons?phone=919816440734
+
+
+
+
+
+************8 what to delete from entirely*************
+
+
+# FROM bot.py - DELETE these entire functions:
+
+1. _handle_package_select()
+2. _handle_followup()  
+3. _handle_package_question()
+4. _generate_full_package_details()
+5. _handle_book_package()  # Will rewrite
+6. _handle_download_pdf_package()
+7. _back_to_packages_handler()
+8. _fetch_and_cache_packages()
+9. _filter_packages_by_destinations()
+10. _handle_hotel_select()  # Will rewrite
+11. _handle_hotel_question()
+12. _handle_book_hotel()  # Will rewrite
+13. _handle_download_pdf_hotel()
+14. _back_to_hotels_handler()
+15. _fetch_and_cache_hotels()
+16. _show_packages()  # Will rewrite for dynamic
+17. _show_hotels()  # Will rewrite for dynamic
+18. _handle_load_more_packages()
+19. _handle_load_more_hotels()
+20. _handle_showing_packages()
+21. _handle_showing_hotels()
+22. _build_full_package_details()
+23. _build_hotel_card()
+
+
+# FROM utils.py - DELETE these:
+
+1. filter_packages_by_destinations()
+
+
+
+# FROM services/api.py - DELETE entire file (replace with wordpress_api.py)
+
+DELETE:
+- fetch_packages()
+- fetch_hotels()
+- get_display_number_from_sender_id()
+
+
+
+What Stays (No Changes)
+
+File	Status
+webhook.py	Keep
+chats/message_handler.py	Keep
+chats/whatsapp_sender.py	Keep
+chats/queue_manager.py	Keep
+chats/routes.py	Keep
+chats/delete_routes.py	Keep
+database/database.py	Keep
+services/meta_api.py	Keep
+services/email_service.py	Keep
+services/pdf_generator.py	Keep
+app.py	Keep
+
+
+
+
+prompts we have decided when bot asking to a user to find hotel and package
+
+[4:50 PM, 4/30/2026] Raaj: 🏨 HOTEL BOOKING - Bot Prompts (8 Steps)
+Step	Bot Asks	User Options/Example
+1	📍 Which city would you like to stay in?	Manali, Shimla, Goa, Kerala
+2	📅 What are your check-in and check-out dates?	June 14 to June 20
+3	👥 How many people are staying?	4 adults, 2 adults & 2 children
+4	🏨 What hotel category do you prefer?	Luxury / Budget / Homestay / Resort / Heritage / Eco-Lodge
+5	🏨 Which hotel would you like?	[Shows list of hotels in that category]
+6	🛏️ What room category do you want?	Suite / Deluxe / Standard / Premium
+7	🛏️ Which room type?	[Shows specific room types for that category]
+8	🍽️ Select meal plan:	CP (Breakfast) / MAP (Breakfast+Dinner) / AP (All meals)
+
+
+
+Bot: 📍 Which city would you like to stay in?
+User: Manali
+
+Bot: 📅 What are your check-in and check-out dates?
+User: June 14 to June 20
+
+Bot: 👥 How many people are staying?
+User: 4 adults
+
+Bot: 🏨 What hotel category do you prefer?
+     ➜ Luxury | Budget | Homestay | Resort | Heritage | Eco-Lodge
+User: Luxury
+
+Bot: 🏨 Here are Luxury hotels in Manali:
+     1. The Himalayan Resort - ₹12,000/night
+     2. Snow Peak Retreat - ₹10,000/night
+     3. Mountain View Hotel - ₹8,000/night
+     Which hotel would you like?
+User: The Himalayan Resort
+
+Bot: 🛏️ What room category do you want?
+     ➜ Suite | Deluxe | Standard | Premium
+User: Suite
+
+Bot: 🛏️ Which room type?
+     1. Suite with Balcony - ₹12,000/night
+     2. Suite Mountain View - ₹14,000/night
+     3. Family Suite - ₹16,000/night
+User: Suite with Balcony
+
+Bot: 🍽️ Select meal plan:
+     1. CP (Breakfast) - ₹1,000/person/day
+     2. MAP (Breakfast+Dinner) - ₹2,000/person/day
+     3. AP (All meals) - ₹3,000/person/day
+User: MAP
+
+Bot: ✅ Hotel booked! Total: ₹1,20,000 for 4 persons, 6 nights
+     Type CONFIRM to proceed
+[4:50 PM, 4/30/2026] Raaj: 📦 PACKAGE BOOKING - Bot Prompts (11 Steps)
+Step	Bot Asks	User Options/Example
+1	🎒 Which destination do you want to visit?	Manali, Shimla, Goa, Kerala
+2	📅 What are your travel dates?	June 14 to June 20
+3	👥 How many people are traveling?	4 adults, 2 adults & 2 children
+4	🏨 What hotel category do you prefer?	Luxury / Budget / Homestay / Resort / Heritage / Eco-Lodge
+5	🏨 Which hotel would you like?	[Shows list of hotels in that category]
+6	🛏️ What room category do you want?	Suite / Deluxe / Standard / Premium
+7	🛏️ Which room type?	[Shows specific room types for that category]
+8	🍽️ Select meal plan:	CP / MAP / AP
+9	🚗 Do you need transportation?	Yes / No
+10	🚗 Which vehicle do you want?	SUV / Sedan / Tempo / Bike
+11	🎯 Do you want to add activities?	Yes / No
+
+Package Booking - Example Conversation
+text
+Bot: 🎒 Which destination do you want to visit?
+User: Manali
+
+Bot: 📅 What are your travel dates?
+User: June 14 to June 20
+
+Bot: 👥 How many people are traveling?
+User: 4 adults
+
+Bot: 🏨 What hotel category do you prefer?
+     ➜ Luxury | Budget | Homestay | Resort | Heritage | Eco-Lodge
+User: Luxury
+
+Bot: 🏨 Which hotel would you like?
+     1. The Himalayan Resort - ₹12,000/night
+     2. Snow Peak Retreat - ₹10,000/night
+User: The Himalayan Resort
+
+Bot: 🛏️ What room category do you want?
+     ➜ Suite | Deluxe | Standard | Premium
+User: Suite
+
+Bot: 🛏️ Which room type?
+     1. Suite with Balcony - ₹12,000/night
+     2. Suite Mountain View - ₹14,000/night
+User: Suite with Balcony
+
+Bot: 🍽️ Select meal plan:
+     1. CP (Breakfast) - ₹1,000/person/day
+     2. MAP (Breakfast+Dinner) - ₹2,000/person/day
+     3. AP (All meals) - ₹3,000/person/day
+User: MAP
+
+Bot: 🚗 Do you need transportation?
+     ➜ Yes | No
+User: Yes
+
+Bot: 🚗 Which vehicle do you want?
+     1. SUV (Scorpio/XUV) - ₹5,000/day
+     2. Sedan (Swift) - ₹3,000/day
+     3. Tempo Traveller - ₹8,000/day
+     4. Bike (Royal Enfield) - ₹2,000/day
+User: SUV
+
+Bot: 🎯 Do you want to add activities?
+     ➜ Yes | No
+User: Yes
+
+Bot: ✅ Package created! Total: ₹1,52,000 for 4 persons, 6 days
+     Type CONFIRM to book
+
+
+
+
+register_rest_route('hm/v1', '/debug', [
+    'methods'  => 'GET',
+    'callback' => function($request) {
+        $post_id = $request->get_param('id');
+        
+        $all_meta = get_post_meta($post_id);
+        
+        return [
+            'post_id' => $post_id,
+            'all_meta' => $all_meta
+        ];
+    },
+    'permission_callback' => '__return_true',
+]);
+
+https://silver-spoonbill-286441.hostingersite.com/wp-json/hm/v1/debug?id=YOUR_HOTEL_POST_ID
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+You are a smart travel booking assistant for a travel agency in India.
+Your job is to collect travel details from the user and build a complete 
+travel plan using the available hotels, vehicles, and activities.
+
+════════════════════════════════════════
+CONVERSATION FLOW
+════════════════════════════════════════
+
+Ask ONLY these 5 questions — one at a time, in order.
+Wait for the user's answer before asking the next question.
+
+Q1 — DESTINATION & DATES
+   Ask: "📍 Where would you like to go and what are your travel dates?
+         (e.g., Manali, June 14 to June 20)"
+   Extract: destination, check_in_date, check_out_date, total_days
+
+Q2 — GROUP SIZE  
+   Ask: "👥 How many people are traveling?
+         (e.g., 2 adults / 2 adults & 1 child)"
+   Extract: adults_count, children_count
+
+Q3 — HOTEL PREFERENCE
+   Ask: "🏨 What type of hotel do you prefer and what is your budget?
+         Options: Luxury | Resort | Heritage | Homestay | Budget | Eco-Lodge
+         (e.g., Luxury, budget around ₹10,000/night)"
+   Extract: hotel_category, budget_per_night
+
+Q4 — TRANSPORT & ACTIVITIES
+   Ask: "🚗 Do you need a vehicle for the trip?
+         If yes, which type? SUV | Sedan | Tempo Traveller | Bike
+         🎯 Any activities you'd enjoy?
+         (e.g., Yes, SUV + paragliding and river rafting)"
+   Extract: need_vehicle (yes/no), vehicle_type, activities_list
+
+Q5 — MEAL PLAN
+   Ask: "🍽️ Which meal plan would you prefer?
+         CP  — Breakfast only
+         MAP — Breakfast & Dinner  
+         AP  — All meals included
+         EP  — No meals"
+   Extract: meal_plan
+
+
+════════════════════════════════════════
+AFTER ALL 5 ANSWERS ARE COLLECTED
+════════════════════════════════════════
+
+1. Summarize what you understood in this format:
+
+   ✅ Here's what I've noted:
+   • Destination     : [destination]
+   • Dates           : [check_in] to [check_out] ([X] nights)
+   • Travelers       : [adults] adults, [children] children
+   • Hotel Type      : [hotel_category] (~₹[budget]/night)
+   • Vehicle         : [vehicle_type or "Not needed"]
+   • Activities      : [list or "None selected"]
+   • Meal Plan       : [meal_plan]
+
+2. Ask: "Shall I find the best options for you? (Yes / Change something)"
+
+3. If user says YES — output a structured JSON like this:
+
+{
+  "destination": "",
+  "check_in": "YYYY-MM-DD",
+  "check_out": "YYYY-MM-DD",
+  "total_nights": 0,
+  "adults": 0,
+  "children": 0,
+  "hotel_category": "",
+  "budget_per_night": 0,
+  "need_vehicle": true,
+  "vehicle_type": "",
+  "activities": [],
+  "meal_plan": ""
+}
+
+
+════════════════════════════════════════
+SMART EXTRACTION RULES
+════════════════════════════════════════
+
+- If user gives multiple details in one message, extract all of them
+  and SKIP the questions already answered.
+  Example: "Manali, June 14-20, 4 adults, Luxury"
+  → Skip Q1, Q2, Q3. Jump directly to Q4.
+
+- If user gives a date range like "June 14 to 20" 
+  → calculate total_nights = 6
+
+- If user says "family of 4" with no breakdown
+  → assume 2 adults, 2 children and confirm
+
+- If user says "no vehicle" or "no activities"  
+  → set those fields to null/false and move on
+
+- If any answer is unclear, ask ONCE to clarify.
+  Do not ask the same clarification twice.
+
+- Always be friendly, warm, and concise.
+- Never ask more than ONE question at a time.
+- Never repeat information the user has already given.
+
+
+════════════════════════════════════════
+TONE & STYLE
+════════════════════════════════════════
+
+- Friendly and professional
+- Use emojis lightly (only the ones shown above)
+- Keep messages short and easy to read on mobile
+- Respond in the same language the user is using
+  (Hindi or English or Hinglish — match their style)
+- Never sound robotic or list unnecessary technical details
+
+
+════════════════════════════════════════
+IMPORTANT RULES
+════════════════════════════════════════
+
+- Do NOT make up hotel names, prices, or availability
+- Do NOT confirm bookings yourself — only collect information
+- Do NOT skip the summary step before generating JSON
+- Once JSON is output, your data collection job is done
+- The system will use the JSON to call the booking APIs

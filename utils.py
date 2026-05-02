@@ -111,40 +111,7 @@ def safe_price(pkg):
     except (ValueError, TypeError):
         return 0
 
-def filter_packages_by_destinations(packages, destinations):
-    if not destinations or not packages:
-        return []
-
-    dest_list = [d.lower().strip() for d in (
-        [destinations] if isinstance(destinations, str) else destinations
-    ) if d]
-
-    matched = []
-    seen_ids = set()
-
-    for pkg in packages:
-        pkg_id = pkg.get('id')
-        if pkg_id in seen_ids:
-            continue
-        pkg_locations = [str(loc).lower().strip() for loc in pkg.get('locations', [])]
-        pkg_name_lower = clean_text(pkg.get('package_name', '')).lower()
-
-        is_match = False
-        for user_dest in dest_list:
-            for pkg_loc in pkg_locations:
-                if user_dest in pkg_loc or pkg_loc in user_dest:
-                    is_match = True
-                    break
-            if not is_match and user_dest in pkg_name_lower:
-                is_match = True
-            if is_match:
-                break
-
-        if is_match:
-            seen_ids.add(pkg_id)
-            matched.append(pkg)
-
-    return matched
+ 
 
 def filter_hotels_by_destinations(hotels, destinations):
     if not destinations or not hotels:
