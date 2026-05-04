@@ -103,7 +103,7 @@ def verify_webhook():
 def home():
     return render_template('index.html')
 
- 
+# ✅ STATUS → used by HTML
 @app.route('/status')
 def status():
     return jsonify({"ok": True})

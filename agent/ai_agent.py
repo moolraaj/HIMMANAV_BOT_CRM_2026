@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, List
 from openai import OpenAI
 from agent.tools import TravelTools, TOOL_DEFINITIONS
+from agent.package_agent import PackageAgent
 from datetime import datetime
 import re
 
@@ -14,6 +15,7 @@ class AIHotelAgent:
     def __init__(self):
         self.client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
         self.tools = TravelTools()
+        self.package_agent = PackageAgent()
         self.sessions = {}
 
     def get_system_prompt(self) -> str:
@@ -21,7 +23,7 @@ class AIHotelAgent:
 
 FIRST: Ask user "Are you looking for hotels or travel packages?"
 - If hotels, proceed with hotel flow
-- If packages, respond: "Packages feature coming soon!"
+- If packages, you will respond: "Let me help you book a travel package"
 
 HOTEL BOOKING FLOW (Follow STRICTLY in this order):
 1. Ask: "Which city are you looking for hotels in?"
@@ -74,6 +76,41 @@ CRITICAL RULES:
 """
 
     def execute(self, phone: str, user_message: str, state: dict = None) -> Dict:
+        # ============================================================
+        # PACKAGE ROUTING - Check for active package session first
+        # ============================================================
+        if phone in self.package_agent.sessions:
+            pkg_context = self.package_agent.sessions[phone].get("context", {})
+            if pkg_context.get("flow") == "package" or pkg_context.get("step"):
+                logger.info(f"Routing to PackageAgent for {phone} (active package session)")
+                response = self.package_agent.execute(phone, user_message, state)
+                if state is not None and phone in self.package_agent.sessions:
+                    state["package_data"] = self.package_agent.sessions[phone].get("context", {})
+                return response
+
+        # ============================================================
+        # Check if user wants to start a package booking
+        # ============================================================
+        msg_lower = user_message.strip().lower()
+        
+        if msg_lower == "travel package" or msg_lower == "package":
+            logger.info(f"User selected PACKAGE booking for {phone}")
+            response = self.package_agent.execute(phone, user_message, state)
+            if state is not None and phone in self.package_agent.sessions:
+                state["package_data"] = self.package_agent.sessions[phone].get("context", {})
+            return response
+        
+        if any(word in msg_lower for word in ["package", "tour", "trip", "holiday", "vacation"]):
+            if phone not in self.sessions or self.sessions[phone].get("context", {}).get("step") == "ask_service_type":
+                logger.info(f"User indicated PACKAGE interest for {phone}")
+                response = self.package_agent.execute(phone, user_message, state)
+                if state is not None and phone in self.package_agent.sessions:
+                    state["package_data"] = self.package_agent.sessions[phone].get("context", {})
+                return response
+
+        # ============================================================
+        # HOTEL FLOW - YOUR EXISTING CODE (UNCHANGED)
+        # ============================================================
         if phone not in self.sessions:
             # Restore context from persistent state (survives server restarts)
             saved_context = (state or {}).get("data", {})
@@ -96,7 +133,7 @@ CRITICAL RULES:
                 "categories_from_api": None,
                 "rooms_list": None,
                 "hotels_list": None,
-                "full_hotel_details": None,  # NEW: store full hotel details
+                "full_hotel_details": None,
                 "step": "ask_service_type"
             }
 
@@ -120,7 +157,6 @@ CRITICAL RULES:
         session["history"].append({"role": "user", "content": user_message})
 
         # ── NEW: Handle "Change City" button ──────────────────────────────────
-        # User wants to pick a different city — keep dates and guests intact.
         if user_message.strip().lower() == "change_city":
             context["destination"] = None
             context["selected_category"] = None
@@ -128,7 +164,6 @@ CRITICAL RULES:
             context["selected_hotel_data"] = None
             context["hotels_list"] = None
             context["rooms_list"] = None
-            # Mark that when next city arrives we jump straight to categories
             context["step"] = "change_city_ask_destination"
             if state is not None:
                 state["data"] = context
@@ -143,22 +178,20 @@ CRITICAL RULES:
             if rooms_result.get("success"):
                 context["rooms_list"] = rooms_result.get("rooms", [])
                 context["meal_plan_data"] = rooms_result.get("meal_plan", {})
-                context["full_hotel_details"] = rooms_result.get("full_hotel_details", {})  # NEW: store full hotel details
+                context["full_hotel_details"] = rooms_result.get("full_hotel_details", {})
                 context["step"] = "rooms_shown"
-                # Save to persistent state
                 if state is not None:
                     state["data"] = context
                 return self._format_response("", context)
             else:
                 return {"type": "text", "content": f"Sorry, could not fetch rooms: {rooms_result.get('error')}"}
 
-        # Handle room pick by index (pick_room_0, pick_room_1, ...)
+        # Handle room pick by index
         if user_message.startswith("pick_room_"):
             try:
                 room_index = int(user_message.replace("pick_room_", "").strip())
                 rooms_list = context.get("rooms_list") or []
 
-                # Re-fetch rooms if lost after server restart
                 if not rooms_list and context.get("selected_hotel"):
                     logger.info(f"Re-fetching rooms for {context['selected_hotel']} after restart")
                     refetch = self.tools.get_hotel_rooms(context["selected_hotel"])
@@ -181,10 +214,8 @@ CRITICAL RULES:
                     
                     logger.info(f"Room selected - Check-in: {check_in}, Check-out: {check_out}, Guests: {context.get('guests')}")
 
-                    # If dates lost after restart, ask user again
                     if not check_in or not check_out:
                         context["step"] = "ask_dates_for_room"
-                        # Save to persistent state
                         if state is not None:
                             state["data"] = context
                         return {"type": "text", "content": "Please provide your check-in and check-out dates to continue."}
@@ -198,7 +229,6 @@ CRITICAL RULES:
                     if price_result.get("success"):
                         context["price_details"] = price_result
                         context["step"] = "price_calculated"
-                        # Save to persistent state
                         if state is not None:
                             state["data"] = context
                         return self._format_response("", context)
@@ -231,7 +261,7 @@ CRITICAL RULES:
                     ]
                 }
 
-        # Handle "Continue with current hotel" — skip room pick, go straight to final summary
+        # Handle "Continue with current hotel"
         if user_message.lower() == "continue_current_hotel":
             if context.get("price_details") and context.get("meal_details"):
                 context["step"] = "final_summary"
@@ -244,10 +274,9 @@ CRITICAL RULES:
                     state["data"] = context
                 return self._format_response("", context)
             else:
-                # fallback: re-show rooms
                 return self._format_response("", context)
 
-        # Handle "Change Meal Plan" button — show meal options again
+        # Handle "Change Meal Plan" button
         if user_message.lower() == "change_meal_plan" and context.get("price_details"):
             price = context.get("price_details", {})
             return {
@@ -260,7 +289,7 @@ CRITICAL RULES:
                 ]
             }
 
-        # Handle meal selection from buttons
+        # Handle meal selection
         if user_message.lower() in ["map", "cp", "ep"] and context.get("price_details"):
             meal_result = self.tools.calculate_meal_price(
                 user_message.lower(),
@@ -271,7 +300,6 @@ CRITICAL RULES:
             if meal_result.get("success"):
                 context["meal_details"] = meal_result
                 context["step"] = "final_summary"
-                # Save to persistent state
                 if state is not None:
                     state["data"] = context
                 return self._format_response("", context)
@@ -279,20 +307,13 @@ CRITICAL RULES:
         # Handle confirm booking
         if user_message.lower() == "confirm" and context.get("step") == "final_summary":
             context["step"] = "booking_confirmed"
-            # Save to persistent state before clearing
             if state is not None:
                 state["data"] = context
             
-            # Get the confirmation response
             response = self._format_response("confirm", context)
-            
-            # CRITICAL: Reset the session after booking confirmation
-            # This clears all conversation history and context
             self.reset_session(phone)
             
-            # Also clear persistent state
             if state is not None:
-                # Reset to fresh state
                 state["data"] = {
                     "service_type": None,
                     "flow": "initial",
@@ -318,7 +339,7 @@ CRITICAL RULES:
             logger.info(f"Session reset for {phone} after booking confirmation")
             return response
 
-        # Handle category selection directly without LLM (eliminates double LLM call)
+        # Handle category selection directly
         categories_in_context = context.get("categories_from_api") or []
         known_categories = [c.get("name", "").lower() for c in categories_in_context]
         if user_message.strip().lower() in known_categories and context.get("destination"):
@@ -326,7 +347,6 @@ CRITICAL RULES:
             context["selected_category"] = matched_category
             result = self.tools.search_hotels_by_category(matched_category, context.get("destination"))
             self._update_context("search_hotels_by_category", result, context)
-            # Save to persistent state
             if state is not None:
                 state["data"] = context
             return self._format_response("", context)
@@ -335,12 +355,10 @@ CRITICAL RULES:
         extracted_info = self._extract_info_with_llm(user_message, context)
         self._apply_extracted_info(extracted_info, context)
         
-        # CRITICAL FIX: Immediately save context after extraction
         if state is not None:
             state["data"] = context
             logger.info(f"Saved context after extraction - check_in={context.get('check_in')}, check_out={context.get('check_out')}, destination={context.get('destination')}, guests={context.get('guests')}")
 
-        # If city just changed and dates/guests already exist, fetch categories immediately
         if (context.get("step") == "show_categories"
                 and context.get("destination")
                 and context.get("check_in")
@@ -352,7 +370,6 @@ CRITICAL RULES:
                 state["data"] = context
             return self._format_response("", context)
 
-        # If dates were just provided and a room is already selected, calculate price now
         if (context.get("step") == "ask_dates_for_room"
                 and context.get("check_in")
                 and context.get("check_out")
@@ -367,12 +384,10 @@ CRITICAL RULES:
             if price_result.get("success"):
                 context["price_details"] = price_result
                 context["step"] = "price_calculated"
-                # Save to persistent state
                 if state is not None:
                     state["data"] = context
                 return self._format_response("", context)
 
-        # Save context to persistent state after any update
         if state is not None:
             state["data"] = context
 
@@ -421,7 +436,6 @@ CRITICAL RULES:
                 final_message = final_response.choices[0].message.content
                 session["history"].append({"role": "assistant", "content": final_message})
 
-                # Save to persistent state
                 if state is not None:
                     state["data"] = context
 
@@ -431,7 +445,6 @@ CRITICAL RULES:
                 response_text = assistant_message.content
                 session["history"].append(assistant_message)
                 
-                # Save to persistent state
                 if state is not None:
                     state["data"] = context
                     
@@ -512,7 +525,6 @@ Return JSON ONLY with this structure:
             if context.get("step") == "ask_destination":
                 context["step"] = "ask_dates"
             elif context.get("step") == "change_city_ask_destination":
-                # Dates & guests already set — go straight to categories
                 context["step"] = "show_categories"
 
         today = datetime.now().date()
@@ -523,7 +535,6 @@ Return JSON ONLY with this structure:
                 check_out_date = datetime.strptime(extracted["check_out"], "%Y-%m-%d").date()
 
                 if check_in_date >= today and check_out_date > check_in_date:
-                    # Update dates in context
                     context["check_in"] = extracted["check_in"]
                     context["check_out"] = extracted["check_out"]
                     logger.info(f"✅ Dates saved to context - Check-in: {context['check_in']}, Check-out: {context['check_out']}")
@@ -622,7 +633,6 @@ Based on current step, ask user for missing information or call appropriate tool
             context["meal_details"] = result
 
     def _format_response(self, message: str, context: Dict) -> Dict:
-
         if context.get("step") == "ask_service_type":
             return {
                 "type": "buttons",
@@ -650,19 +660,15 @@ Based on current step, ask user for missing information or call appropriate tool
                 "buttons": buttons
             }
 
-        # ── UPDATED: No hotels found → show category grid + "Change City" button ──
         if context.get("step") == "no_hotels_found":
             categories = context.get("categories_from_api", [])
             failed_cat = context.get("no_hotels_category", "selected")
             destination = context.get("destination", "this city")
 
-            # Build category buttons
             buttons = [
                 {"text": cat.get("name"), "value": cat.get("name")}
                 for cat in categories if cat.get("name")
             ]
-
-            # Append the "Change City" button at the end
             buttons.append({"text": "Change City", "value": "change_city"})
 
             return {
@@ -673,7 +679,6 @@ Based on current step, ask user for missing information or call appropriate tool
                 ),
                 "buttons": buttons
             }
-        # ─────────────────────────────────────────────────────────────────────
 
         if context.get("hotels_list") and context.get("step") == "hotels_shown":
             hotels = context["hotels_list"][:8]
@@ -720,9 +725,6 @@ Based on current step, ask user for missing information or call appropriate tool
                 ]
             }
 
-        # ============================================================
-        # FINAL SUMMARY WITH FULL HOTEL DETAILS (UPDATED)
-        # ============================================================
         if context.get("step") == "final_summary":
             price = context.get("price_details", {})
             meal = context.get("meal_details", {})
@@ -733,10 +735,8 @@ Based on current step, ask user for missing information or call appropriate tool
             grand_total = room_total + meal_total
             meal_cost_line = f"Rs.{meal_total:,.2f}" if meal_total > 0 else "Rs.0.00 (included)"
             
-            # Get full hotel details from context
             full_hotel = context.get("full_hotel_details", {})
             
-            # Build hotel information section
             hotel_info = ""
             if full_hotel:
                 hotel_info = f"""
@@ -760,12 +760,10 @@ Extra Services:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
             
-            # Build room facilities section
             room_facilities = ""
             if room.get('facilities'):
                 room_facilities = "\nFacilities:\n" + "\n".join([f"  • {f}" for f in room.get('facilities', [])])
             
-            # Build seasonal pricing section
             seasonal_info = ""
             if room.get('seasons'):
                 seasonal_info = "\n\nSeasonal Pricing (for reference):"
@@ -815,7 +813,6 @@ Confirm your booking?
                     {"text": "Other Hotels", "value": "other_hotels"}
                 ]
             }
-        # ============================================================
 
         if context.get("step") == "booking_confirmed":
             return {
@@ -831,4 +828,5 @@ Confirm your booking?
     def reset_session(self, phone: str):
         if phone in self.sessions:
             del self.sessions[phone]
-            logger.info(f"Session reset for {phone}")
+            logger.info(f"Hotel session reset for {phone}")
+        self.package_agent.reset_session(phone)
