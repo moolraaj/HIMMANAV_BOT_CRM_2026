@@ -1,6 +1,7 @@
 # webhook.py — FIXED:  
 import eventlet
 eventlet.monkey_patch()
+from flask import render_template
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -98,7 +99,14 @@ def verify_webhook():
 
     return "Verification failed", 403
 
+@app.route('/')
+def home():
+    return render_template('index.html')
 
+ 
+@app.route('/status')
+def status():
+    return jsonify({"ok": True})
  
 @app.route('/webhook', methods=['POST'])
 def webhook():
