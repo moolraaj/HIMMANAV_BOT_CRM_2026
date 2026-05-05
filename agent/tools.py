@@ -4,6 +4,7 @@ import requests
 import logging
 from datetime import datetime
 import re
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +23,15 @@ class TravelTools:
 
     @staticmethod
     def get_categories() -> Dict[str, Any]:
+        """Fetch hotel categories from API - DYNAMIC only, no hardcoding"""
         try:
-            response = requests.get(CATEGORIES_API, timeout=10)
+            response = requests.get(CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data and data.get("status") and data.get("data"):
                 categories = [{"name": cat.get("category_name")} for cat in data["data"]]
                 return {"success": True, "categories": categories}
-            return {
-                "success": True,
-                "categories": [
-                    {"name": "Budget"}, {"name": "Standard"},
-                    {"name": "Deluxe"}, {"name": "Premium"}, {"name": "Luxury"}
-                ]
-            }
+            return {"success": False, "error": "No categories found from API", "categories": []}
         except Exception as e:
             logger.error(f"Categories error: {e}")
             return {"success": False, "error": str(e), "categories": []}
@@ -43,7 +39,7 @@ class TravelTools:
     @staticmethod
     def search_hotels_by_category(category: str, location: str = None) -> Dict[str, Any]:
         try:
-            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=10)
+            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if not data.get("status"):
@@ -76,7 +72,7 @@ class TravelTools:
     @staticmethod
     def get_hotel_rooms(hotel_name: str) -> Dict[str, Any]:
         try:
-            response = requests.get(ALL_HOTELS_API, timeout=10)
+            response = requests.get(ALL_HOTELS_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_hotels = data.get("hotels", [])
@@ -104,8 +100,9 @@ class TravelTools:
                 room_data = {
                     "category": room.get("room_category", "Standard"),
                     "type": room.get("room_type", "Regular"),
-                    "min_capacity": int(room.get("minimum_capacity", 1)),
-                    "max_capacity": int(room.get("maximum_capacity", 2)),
+                    "minimum_capacity": int(room.get("minimum_capacity", 1)),
+                    "maximum_capacity": int(room.get("maximum_capacity", 2)),
+                    "extra_person_capacity": int(room.get("extra_person_capacity", 1)),
                     "base_price": int(room.get("base_price", 0)),
                     "extra_person_price": int(room.get("extra_person_price", 0)),
                     "images": room.get("room_images", []),
@@ -114,7 +111,6 @@ class TravelTools:
                 }
                 formatted_rooms.append(room_data)
 
-            # Build full hotel details for summary display
             full_hotel_details = {
                 "hotel_name": selected.get("hotel_name"),
                 "category": selected.get("category", ""),
@@ -140,54 +136,107 @@ class TravelTools:
                 "hotel_gallery": selected.get("gallery", []),
                 "full_hotel_details": full_hotel_details,
             }
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout fetching rooms for {hotel_name}")
+            return {"success": False, "error": "Server timeout. Please try again."}
         except Exception as e:
             logger.error(f"Get rooms error: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
+    def find_matching_season(seasons: List[Dict], check_in_date: datetime, check_out_date: datetime) -> Optional[Dict]:
+        """Find which season the user's dates fall into based on season date ranges"""
+        try:
+            for season in seasons:
+                starting_date_str = season.get("starting_date", "")
+                end_date_str = season.get("end_date", "")
+                
+                if not starting_date_str or not end_date_str:
+                    continue
+                
+                try:
+                    if "-" in starting_date_str:
+                        parts = starting_date_str.split("-")
+                        if len(parts[0]) == 4:
+                            season_start = datetime.strptime(starting_date_str, "%Y-%m-%d")
+                            season_end = datetime.strptime(end_date_str, "%Y-%m-%d")
+                        else:
+                            season_start = datetime.strptime(starting_date_str, "%d-%m-%Y")
+                            season_end = datetime.strptime(end_date_str, "%d-%m-%Y")
+                    else:
+                        continue
+                except ValueError:
+                    continue
+                
+                if season_start > season_end:
+                    if check_in_date >= season_start or check_in_date <= season_end:
+                        return season
+                else:
+                    if season_start <= check_in_date <= season_end:
+                        return season
+                        
+                if season_start <= check_out_date <= season_end:
+                    return season
+                    
+            return None
+        except Exception as e:
+            logger.error(f"Season matching error: {e}")
+            return None
+
+ 
+    @staticmethod
     def calculate_room_price(room: Dict, check_in: str, check_out: str, guests: int) -> Dict[str, Any]:
+        """Calculate room price with dynamic capacity and season matching"""
         try:
             check_in_date = datetime.strptime(check_in, "%Y-%m-%d")
             check_out_date = datetime.strptime(check_out, "%Y-%m-%d")
             nights = (check_out_date - check_in_date).days
-            month = check_in_date.month
-            price_per_night = int(room.get("base_price", 0))
-            extra_price = int(room.get("extra_person_price", 0))
+            
+            if nights <= 0:
+                return {"success": False, "error": "Check-out date must be after check-in date"}
+            
+            # Get values from API - ONLY use min and max capacity
+            min_capacity = int(room.get("minimum_capacity", room.get("min_capacity", 1)))
+            max_capacity = int(room.get("maximum_capacity", room.get("max_capacity", 2)))
+            
+            # Find matching season for pricing
             seasons = room.get("seasons", [])
-            for season in seasons:
-                season_name = season.get("season_name", "").lower()
-                season_price = int(season.get("price", 0))
-                season_extra = int(season.get("extra_price", 0))
-                if "spring" in season_name and 3 <= month <= 5:
-                    price_per_night = season_price if season_price > 0 else price_per_night
-                    extra_price = season_extra if season_extra > 0 else extra_price
-                elif "summer" in season_name and 4 <= month <= 6:
-                    price_per_night = season_price if season_price > 0 else price_per_night
-                    extra_price = season_extra if season_extra > 0 else extra_price
-                elif "monsoon" in season_name and 7 <= month <= 9:
-                    price_per_night = season_price if season_price > 0 else price_per_night
-                    extra_price = season_extra if season_extra > 0 else extra_price
-                elif "autumn" in season_name and 10 <= month <= 11:
-                    price_per_night = season_price if season_price > 0 else price_per_night
-                    extra_price = season_extra if season_extra > 0 else extra_price
-                elif "winter" in season_name and (month == 12 or month <= 2):
-                    price_per_night = season_price if season_price > 0 else price_per_night
-                    extra_price = season_extra if season_extra > 0 else extra_price
-            max_capacity = int(room.get("max_capacity", 2))
-            extra_people = max(0, guests - max_capacity)
-            room_total = price_per_night * nights
-            extra_total = extra_price * extra_people * nights
+            matching_season = TravelTools.find_matching_season(seasons, check_in_date, check_out_date)
+            
+            if matching_season:
+                price_per_night = int(matching_season.get("price", 0))
+                extra_price = int(matching_season.get("extra_price", 0))
+                season_name = matching_season.get("season_name", "Unknown")
+            else:
+                price_per_night = int(room.get("base_price", 0))
+                extra_price = int(room.get("extra_person_price", 0))
+                season_name = "Regular Rate"
+            
+            # Calculate rooms needed based on max capacity
+            rooms_needed = math.ceil(guests / max_capacity)
+            
+            # Calculate extra people (guests beyond min_capacity across all rooms)
+            extra_people = max(0, guests - (rooms_needed * min_capacity))
+            
+            # Calculate totals
+            room_total = rooms_needed * price_per_night * nights
+            extra_total = extra_people * extra_price * nights
             grand_total = room_total + extra_total
+            
             return {
                 "success": True,
                 "nights": nights,
                 "guests": guests,
+                "rooms_needed": rooms_needed,
+                "min_capacity": min_capacity,
+                "max_capacity": max_capacity,
                 "extra_people": extra_people,
-                "price_per_night": price_per_night,
+                "price_per_night_per_room": price_per_night,
                 "extra_price_per_night": extra_price,
                 "room_total": room_total,
                 "extra_total": extra_total,
-                "grand_total": grand_total
+                "grand_total": grand_total,
+                "season_used": season_name
             }
         except Exception as e:
             logger.error(f"Price calculation error: {e}")
@@ -225,7 +274,7 @@ class TravelTools:
     @staticmethod
     def get_all_hotels_in_location(location: str) -> Dict[str, Any]:
         try:
-            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=10)
+            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_hotels = []
@@ -245,9 +294,9 @@ class TravelTools:
 
     @staticmethod
     def get_room_categories() -> Dict[str, Any]:
-        """Fetch room categories from API"""
+        """Fetch room categories from API - DYNAMIC only"""
         try:
-            response = requests.get(ROOM_CATEGORIES_API, timeout=10)
+            response = requests.get(ROOM_CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("room_categories"):
@@ -262,16 +311,15 @@ class TravelTools:
 
     @staticmethod
     def get_vehicle_categories() -> Dict[str, Any]:
-        """Fetch vehicle category names with slugs (for button display and API calls)"""
+        """Fetch vehicle category names with slugs"""
         try:
-            response = requests.get(VEHICLE_CATEGORIES_API, timeout=10)
+            response = requests.get(VEHICLE_CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("categories"):
-                # Return both name and slug for each category
                 return {
                     "success": True,
-                    "vehicle_categories": data.get("categories", [])  # Already has {id, name, slug}
+                    "vehicle_categories": data.get("categories", [])
                 }
             return {"success": False, "error": "No vehicle categories found", "vehicle_categories": []}
         except Exception as e:
@@ -280,18 +328,14 @@ class TravelTools:
 
     @staticmethod
     def get_vehicles_by_type(vehicle_type: str) -> Dict[str, Any]:
-        """
-        Fetch vehicles filtered by type (e.g. 'bike', 'suv', 'sedan') with pricing.
-        Uses: /wp-json/hm/v1/vehicle?phone=919816440734&include=<vehicle_type>
-        """
+        """Fetch vehicles filtered by type with pricing"""
         try:
             url = VEHICLE_BY_TYPE_API.format(vehicle_type=vehicle_type.lower())
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             data = response.json()
 
             vehicles = []
-            # Handle both list and dict responses
             raw = data if isinstance(data, list) else data.get("vehicles", data.get("data", []))
             for v in raw:
                 vehicles.append({
@@ -310,11 +354,9 @@ class TravelTools:
 
     @staticmethod
     def get_hotels_in_location_for_package(location: str, hotel_category: str = None) -> Dict[str, Any]:
-        """
-        Fetch hotels matching a specific location (and optionally category) for itinerary display.
-        """
+        """Fetch hotels matching a specific location for itinerary display"""
         try:
-            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=10)
+            response = requests.get(HOTELS_BY_CATEGORY_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             matched = []
@@ -339,9 +381,9 @@ class TravelTools:
 
     @staticmethod
     def get_packages(destination: str = None) -> Dict[str, Any]:
-        """Fetch travel packages, optionally filtered by destination."""
+        """Fetch travel packages, optionally filtered by destination"""
         try:
-            response = requests.get(PACKAGES_API, timeout=15)
+            response = requests.get(PACKAGES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_packages = data if isinstance(data, list) else data.get("packages", data.get("data", []))
@@ -361,7 +403,7 @@ class TravelTools:
     def get_room_prices() -> Dict[str, Any]:
         """Fetch room prices from API"""
         try:
-            response = requests.get(ROOM_PRICES_API, timeout=10)
+            response = requests.get(ROOM_PRICES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("prices"):
@@ -375,7 +417,7 @@ class TravelTools:
     def get_vehicle_prices() -> Dict[str, Any]:
         """Fetch vehicle prices from API"""
         try:
-            response = requests.get(VEHICLE_PRICES_API, timeout=10)
+            response = requests.get(VEHICLE_PRICES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("prices"):
@@ -389,7 +431,7 @@ class TravelTools:
     def calculate_package_price(room_category: Dict, vehicle_category: Dict,
                                 check_in: str, check_out: str, guests: int,
                                 want_activities: bool = False) -> Dict[str, Any]:
-        """Calculate package price — fetches prices from API, no hardcoding."""
+        """Calculate package price — fetches prices from API, no hardcoding"""
         try:
             check_in_date = datetime.strptime(check_in, "%Y-%m-%d")
             check_out_date = datetime.strptime(check_out, "%Y-%m-%d")
@@ -418,7 +460,7 @@ class TravelTools:
             try:
                 act_response = requests.get(
                     "https://silver-spoonbill-286441.hostingersite.com/wp-json/hm/v1/activities-prices",
-                    timeout=10
+                    timeout=30
                 )
                 if act_response.status_code == 200:
                     act_data = act_response.json()
@@ -450,8 +492,8 @@ class TravelTools:
             return {"success": False, "error": str(e)}
 
 
+# TOOL_DEFINITIONS
 TOOL_DEFINITIONS = [
-    # ── Hotel tools ────────────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
@@ -503,7 +545,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "calculate_room_price",
-            "description": "Calculate price for selected room",
+            "description": "Calculate price for selected room with season matching and capacity calculation",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -533,7 +575,6 @@ TOOL_DEFINITIONS = [
             }
         }
     },
-    # ── Package tools ──────────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
@@ -554,14 +595,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_vehicles_by_type",
-            "description": "Fetch specific vehicles with pricing filtered by type (e.g. bike, suv, sedan)",
+            "description": "Fetch specific vehicles with pricing filtered by type",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "vehicle_type": {
-                        "type": "string",
-                        "description": "Vehicle type slug, e.g. 'bike', 'suv', 'sedan', 'tempo'"
-                    }
+                    "vehicle_type": {"type": "string"}
                 },
                 "required": ["vehicle_type"]
             }

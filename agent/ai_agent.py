@@ -32,47 +32,53 @@ HOTEL BOOKING FLOW (Follow STRICTLY in this order):
    - If the city name does NOT match any real place you know of, respond: "I could not find a place called [city]. Could you please retype the destination?"
    - Do NOT proceed to step 3 until a valid, recognizable city is confirmed.
 3. After valid destination confirmed, ask: "What are your check-in and check-out dates?"
-4. After dates, ask: "How many guests will be staying?"
-5. After guests, call get_categories() and show ALL categories from API as suggestion buttons
-6. User selects category, call search_hotels_by_category(category, destination)
-   - If no hotels found for that category in the destination, show all category buttons again + a "Change City" button at the bottom. Do NOT ask for dates or guests again.
+4. DATE VALIDATION RULES (CRITICAL):
+   - Check-in date MUST be TODAY or FUTURE date (cannot be past date)
+   - Check-out date MUST be AFTER check-in date (cannot be same day or before)
+   - Example: If today is 2026-05-05, check-in cannot be 2026-05-04 or earlier
+   - Example: If user says "12 may to 10 may" - this is INVALID because end date is before start date
+   - Example: If user says "10 may to 15 may" - this is VALID (check-in=10 may, check-out=15 may)
+   - If dates are invalid, show error message: "Invalid dates. Please provide check-in date that is today or future, and check-out date after check-in date."
+   - Do NOT proceed until valid dates are provided
+5. After valid dates, ask: "How many guests will be staying?"
+6. After guests, call get_categories() and show ALL categories from API as suggestion buttons
+7. User selects category, call search_hotels_by_category(category, destination)
+   - If no hotels found for that category in the destination, show all category buttons again, then show a separate "Change City" button below
    - If hotels found, show hotels with: Image, Name, Category, Description, and "View Rooms" button
-7. User clicks "Change City":
+8. User clicks "Change City":
    - Only reset the city. Keep check-in, check-out, and guests as they are. Do NOT ask for dates or guests again.
    - Ask only: "Which city would you like to search hotels in?"
    - After user gives new city, validate it, then immediately show category buttons (skip dates and guests steps entirely)
-8. User clicks View Rooms, call get_hotel_rooms(hotel_name)
-9. Show ALL rooms with: Image, Room Category, Room Type, Capacity, Price, and "Pick" button
-10. User picks room, call calculate_room_price() and show price breakdown
-11. Show meal plan options ONCE: MAP / CP / EP buttons
-12. User selects meal, call calculate_meal_price() and show FINAL SUMMARY
-13. FINAL SUMMARY must always show these 3 buttons only:
-    - "Confirm Booking"
-    - "Change Meal Plan" (shows MAP/CP/EP again, user can change as many times as they want until confirmed)
-    - "Other Hotels" (shows remaining hotels in the list excluding the currently selected hotel)
-14. "Other Hotels" logic:
+9. User clicks View Rooms, call get_hotel_rooms(hotel_name)
+10. Show ALL rooms with: Image, Room Category, Room Type, Capacity, Price, and "Pick" button
+11. User picks room, call calculate_room_price() and show price breakdown
+12. Show meal plan options ONCE: MAP / CP / EP buttons
+13. User selects meal, call calculate_meal_price() and show FINAL SUMMARY
+14. FINAL SUMMARY must always show these 3 buttons only:
+    - "📖 BOOK NOW"
+    - "Change Meal Plan"
+    - "Other Hotels"
+15. "Other Hotels" logic:
     - If other hotels exist in the current list → show them (excluding current hotel), same hotel card format
     - If no other hotels → show message with current hotel name + "Continue with [Hotel Name]" button only
-    - "Continue with [Hotel Name]" → go directly to FINAL SUMMARY (do NOT show rooms or meal again, everything already selected)
-15. "Change Meal Plan":
+16. "Change Meal Plan":
     - Show MAP / CP / EP buttons again
-    - User picks new meal → recalculate and show updated FINAL SUMMARY with same 3 buttons
-    - Repeat until user confirms
-16. Ask: "Confirm booking?"
-17. After user confirms booking, show booking confirmation and start a NEW conversation (clear all session data)
+    - User picks new meal → recalculate and show updated FINAL SUMMARY
+17. After user confirms booking, show booking confirmation and start a NEW conversation
 
 CRITICAL RULES:
 - NEVER hardcode cities or categories, ALWAYS fetch from API
 - Use LLM to extract dates, cities, and guest counts from natural language
-- Validate dates: end date must be AFTER start date, no past dates
+- Validate dates STRICTLY: end date must be AFTER start date, no past dates
+- If user provides invalid dates (past date or end date before start date), show error and ask again
 - ALWAYS use tools to fetch real data
 - NEVER hallucinate hotels, rooms, or categories
 - Show images when available from API
-- Do NOT use emoji, icons, dashes (---), or underscores (__) in any response
+- Do NOT use emoji, icons, dashes (---), or underscores (__) in any response except the BOOK NOW button
 - Keep all responses clean plain text or structured data
 - NEVER ask for dates or guests again once they are already collected
-- NEVER show MAP/CP/EP buttons inside the final summary directly — only show "Change Meal Plan" button there
 - After booking is confirmed, reset the session completely so user can start fresh
+- When user updates guest count, recalculate prices automatically
 """
 
     def execute(self, phone: str, user_message: str, state: dict = None) -> Dict:
@@ -109,7 +115,7 @@ CRITICAL RULES:
                 return response
 
         # ============================================================
-        # HOTEL FLOW - YOUR EXISTING CODE (UNCHANGED)
+        # HOTEL FLOW
         # ============================================================
         if phone not in self.sessions:
             # Restore context from persistent state (survives server restarts)
@@ -134,7 +140,8 @@ CRITICAL RULES:
                 "rooms_list": None,
                 "hotels_list": None,
                 "full_hotel_details": None,
-                "step": "ask_service_type"
+                "step": "ask_service_type",
+                "date_error": None
             }
 
             if saved_context:
@@ -156,7 +163,46 @@ CRITICAL RULES:
 
         session["history"].append({"role": "user", "content": user_message})
 
-        # ── NEW: Handle "Change City" button ──────────────────────────────────
+        # Handle guest count update (NEW)
+        if any(word in user_message.lower() for word in ["we are", "we have", "peoples", "people", "guests", "members"]) and not any(word in user_message.lower() for word in ["map", "cp", "ep", "change_meal_plan", "other_hotels", "confirm"]):
+            extracted_info = self._extract_info_with_llm(user_message, context)
+            if extracted_info.get("guests"):
+                new_guests = int(extracted_info["guests"])
+                old_guests = context.get("guests", 0)
+                
+                if new_guests != old_guests and new_guests > 0:
+                    logger.info(f"Updating guests from {old_guests} to {new_guests}")
+                    context["guests"] = new_guests
+                    
+                    # Recalculate price with new guest count
+                    if context.get("selected_room_data") and context.get("check_in") and context.get("check_out"):
+                        price_result = self.tools.calculate_room_price(
+                            context["selected_room_data"],
+                            context["check_in"],
+                            context["check_out"],
+                            new_guests
+                        )
+                        if price_result.get("success"):
+                            context["price_details"] = price_result
+                            
+                            # If meal was already selected, recalculate meal price too
+                            if context.get("meal_details"):
+                                meal_type = context.get("meal_plan", "map")
+                                meal_result = self.tools.calculate_meal_price(
+                                    meal_type,
+                                    context.get("meal_plan_data", {}),
+                                    new_guests,
+                                    price_result.get("nights", 1)
+                                )
+                                if meal_result.get("success"):
+                                    context["meal_details"] = meal_result
+                            
+                            context["step"] = "final_summary"
+                            if state is not None:
+                                state["data"] = context
+                            return self._format_response("", context)
+
+        # Handle "Change City" button
         if user_message.strip().lower() == "change_city":
             context["destination"] = None
             context["selected_category"] = None
@@ -168,7 +214,6 @@ CRITICAL RULES:
             if state is not None:
                 state["data"] = context
             return {"type": "text", "content": "Which city would you like to search hotels in?"}
-        # ─────────────────────────────────────────────────────────────────────
 
         # Handle "View Rooms" button click
         if "View Rooms -" in user_message:
@@ -299,6 +344,7 @@ CRITICAL RULES:
             )
             if meal_result.get("success"):
                 context["meal_details"] = meal_result
+                context["meal_plan"] = user_message.lower()
                 context["step"] = "final_summary"
                 if state is not None:
                     state["data"] = context
@@ -333,7 +379,8 @@ CRITICAL RULES:
                     "rooms_list": None,
                     "hotels_list": None,
                     "full_hotel_details": None,
-                    "step": "ask_service_type"
+                    "step": "ask_service_type",
+                    "date_error": None
                 }
             
             logger.info(f"Session reset for {phone} after booking confirmation")
@@ -459,17 +506,21 @@ CRITICAL RULES:
 You are an information extraction system. Extract the following from the user message:
 
 1. Destination/City: Any city name (Shimla, Manali, Delhi, Mumbai, Goa, Jaipur, etc.)
+
 2. Dates: Check-in and check-out dates. Support natural language like:
-   - "12th to 16th" means assume current month and year
+   - "12th may to 16th may" means check-in=12 may, check-out=16 may
    - "12 to 16" means assume current month and year
    - "next week" means calculate
    - "Dec 25th to Dec 30th" means specific dates
    - "1/12/2026 to 5/12/2026" means specific dates
 
-   Rules:
-   - End date must be AFTER start date
-   - No past dates allowed
-   - If year not specified, use current year or next year if date has passed
+   CRITICAL DATE VALIDATION RULES:
+   - Check-in date MUST be TODAY or FUTURE (cannot be past date)
+   - Check-out date MUST be AFTER check-in date (cannot be same day or before)
+   - If user says "12 may to 10 may" - this is INVALID (check-out before check-in)
+   - If check-in is past date, mark as invalid
+   - If check-out is not after check-in, mark as invalid
+   - Current date is: {datetime.now().strftime("%Y-%m-%d")}
 
 3. Number of Guests: Extract from phrases like:
    - "me and my wife" means 2
@@ -478,6 +529,8 @@ You are an information extraction system. Extract the following from the user me
    - "family of 4" means 4
    - "2 adults" means 2
    - "single" means 1
+   - "we are 4 peoples" means 4
+   - "okay we are 4 peoples" means 4
 
 IMPORTANT: For dates like "12 may to 16 may", assume the current year is 2026.
 Convert to YYYY-MM-DD format.
@@ -495,8 +548,11 @@ Return JSON ONLY with this structure:
     "destination": "city name or null if not found",
     "check_in": "YYYY-MM-DD or null",
     "check_out": "YYYY-MM-DD or null",
+    "check_in_valid": true or false,
+    "check_out_valid": true or false,
     "guests": number or null,
-    "service_type": "hotel" or "package" or null
+    "service_type": "hotel" or "package" or null,
+    "date_error": "error message if dates invalid, else null"
 }}
 """
         try:
@@ -511,7 +567,7 @@ Return JSON ONLY with this structure:
             return result
         except Exception as e:
             logger.error(f"Extraction error: {e}")
-            return {"destination": None, "check_in": None, "check_out": None, "guests": None, "service_type": None}
+            return {"destination": None, "check_in": None, "check_out": None, "guests": None, "service_type": None, "date_error": None}
 
     def _apply_extracted_info(self, extracted: Dict, context: Dict):
         if not context.get("service_type") and extracted.get("service_type"):
@@ -529,32 +585,55 @@ Return JSON ONLY with this structure:
 
         today = datetime.now().date()
 
+        # Date validation logic
         if extracted.get("check_in") and extracted.get("check_out"):
             try:
                 check_in_date = datetime.strptime(extracted["check_in"], "%Y-%m-%d").date()
                 check_out_date = datetime.strptime(extracted["check_out"], "%Y-%m-%d").date()
-
-                if check_in_date >= today and check_out_date > check_in_date:
+                
+                # Check if dates are valid
+                is_valid = True
+                error_msg = None
+                
+                if check_in_date < today:
+                    is_valid = False
+                    error_msg = f"Check-in date {extracted['check_in']} is in the past. Please provide a future date."
+                elif check_out_date <= check_in_date:
+                    is_valid = False
+                    error_msg = f"Check-out date {extracted['check_out']} must be after check-in date {extracted['check_in']}. Please provide valid dates."
+                
+                if is_valid:
                     context["check_in"] = extracted["check_in"]
                     context["check_out"] = extracted["check_out"]
-                    logger.info(f"✅ Dates saved to context - Check-in: {context['check_in']}, Check-out: {context['check_out']}")
+                    context["date_error"] = None
+                    logger.info(f"Valid dates saved - Check-in: {context['check_in']}, Check-out: {context['check_out']}")
                     
                     if context.get("step") == "ask_dates":
                         context["step"] = "ask_guests"
+                    elif context.get("step") == "ask_dates_for_room":
+                        pass
                 else:
-                    logger.warning(f"Invalid dates: {check_in_date} to {check_out_date}")
+                    context["date_error"] = error_msg
+                    context["check_in"] = None
+                    context["check_out"] = None
+                    logger.warning(f"Invalid dates: {error_msg}")
+                    
             except Exception as e:
                 logger.error(f"Date validation error: {e}")
+                context["date_error"] = f"Could not parse dates. Please provide dates in format like '12 may 2026 to 16 may 2026'"
 
         if not context.get("guests") and extracted.get("guests"):
             guests = int(extracted["guests"])
             if 1 <= guests <= 20:
                 context["guests"] = guests
-                logger.info(f"✅ Guests saved to context: {context['guests']}")
-                if context.get("destination") and context.get("check_in") and context.get("check_out"):
+                logger.info(f"Guests saved to context: {context['guests']}")
+                if context.get("destination") and context.get("check_in") and context.get("check_out") and not context.get("date_error"):
                     context["step"] = "show_categories"
 
     def _get_flow_status(self, context: Dict) -> str:
+        date_error = context.get("date_error", "")
+        error_section = f"\n- DATE ERROR: {date_error}" if date_error else ""
+        
         return f"""
 CURRENT BOOKING STATUS:
 - Service Type: {context.get('service_type') or 'Not selected'}
@@ -565,9 +644,16 @@ CURRENT BOOKING STATUS:
 - Guests: {context.get('guests') or 'Not provided'}
 - Category: {context.get('selected_category') or 'Not selected'}
 - Hotel: {context.get('selected_hotel') or 'Not selected'}
-- Room: {context.get('selected_room') or 'Not selected'}
+- Room: {context.get('selected_room') or 'Not selected'}{error_section}
+
+IMPORTANT DATE RULES:
+- Check-in date must be TODAY or FUTURE (not past)
+- Check-out date must be AFTER check-in date
+- Example: "12 may to 10 may" is INVALID
+- Example: "10 may to 15 may" is VALID
 
 Based on current step, ask user for missing information or call appropriate tools.
+If there is a DATE ERROR, explain the error and ask for valid dates again.
 """
 
     def _execute_tool(self, tool_name: str, args: Dict, context: Dict) -> Any:
@@ -633,6 +719,15 @@ Based on current step, ask user for missing information or call appropriate tool
             context["meal_details"] = result
 
     def _format_response(self, message: str, context: Dict) -> Dict:
+        # Check for date error first
+        if context.get("date_error") and context.get("step") in ["ask_dates", "ask_dates_for_room"]:
+            error_msg = context["date_error"]
+            context["date_error"] = None
+            return {
+                "type": "text",
+                "content": f"{error_msg}\n\nPlease provide your check-in and check-out dates again."
+            }
+
         if context.get("step") == "ask_service_type":
             return {
                 "type": "buttons",
@@ -664,20 +759,17 @@ Based on current step, ask user for missing information or call appropriate tool
             categories = context.get("categories_from_api", [])
             failed_cat = context.get("no_hotels_category", "selected")
             destination = context.get("destination", "this city")
-
-            buttons = [
-                {"text": cat.get("name"), "value": cat.get("name")}
-                for cat in categories if cat.get("name")
-            ]
-            buttons.append({"text": "Change City", "value": "change_city"})
-
+            
+            # Return category buttons grid first
+            category_buttons = [{"text": cat.get("name"), "value": cat.get("name")} for cat in categories if cat.get("name")]
+            
+            # Then return separate response for Change City button
+            # Using a special response type that the frontend will handle as two separate components
             return {
-                "type": "buttons_grid",
-                "content": (
-                    f"No hotels found in {destination} for the {failed_cat} category.\n\n"
-                    f"Please select another category or change your city:"
-                ),
-                "buttons": buttons
+                "type": "buttons_grid_with_separate_button",
+                "content": f"No hotels found in {destination} for the {failed_cat} category.\n\nPlease select another category:",
+                "buttons": category_buttons,
+                "separate_button": {"text": "Change City", "value": "change_city"}
             }
 
         if context.get("hotels_list") and context.get("step") == "hotels_shown":
@@ -703,21 +795,26 @@ Based on current step, ask user for missing information or call appropriate tool
             for i, room in enumerate(rooms, 1):
                 if room.get("images") and len(room["images"]) > 0:
                     content += f"![Room {i}]({room['images'][0]})\n\n"
-                content += f"Room {i}: {room['category']} - {room['type']}\n"
-                content += f"Capacity: {room['min_capacity']} - {room['max_capacity']} guests\n"
-                content += f"Base Price: Rs.{room['base_price']}/night\n"
+                content += f"Room {i}: {room.get('room_category', room.get('category', 'N/A'))} - {room.get('room_type', room.get('type', 'N/A'))}\n"
+                content += f"Capacity: {room.get('minimum_capacity', 'N/A')} - {room.get('maximum_capacity', 'N/A')} guests\n"
+                content += f"Base Price: Rs.{room.get('base_price', 0)}/night\n"
                 if room.get('extra_person_price', 0) > 0:
-                    content += f"Extra person: Rs.{room['extra_person_price']}/night\n"
+                    content += f"Extra person: Rs.{room.get('extra_person_price', 0)}/night\n"
                 content += "\n"
             content += "Select a room to proceed:"
-            buttons = [{"text": f"Pick - {r['category']} {r['type']}", "value": f"pick_room_{i-1}"} for i, r in enumerate(rooms[:5])]
+            buttons = [{"text": f"Pick - {r.get('room_category', r.get('category', 'N/A'))} {r.get('room_type', r.get('type', 'N/A'))}", "value": f"pick_room_{i-1}"} for i, r in enumerate(rooms[:5])]
             return {"type": "buttons_grid", "content": content, "buttons": buttons}
 
         if context.get("step") == "price_calculated":
             price = context.get("price_details", {})
+            rooms_needed = price.get("rooms_needed", 1)
             return {
                 "type": "buttons",
-                "content": f"Select Meal Plan\n\nRoom Total: Rs.{price.get('grand_total', 0):,.2f}\n\nChoose your meal preference:",
+                "content": f"Room Price Summary\n\n"
+                          f"Rooms Needed: {rooms_needed} room(s)\n"
+                          f"Nights: {price.get('nights', 0)}\n"
+                          f"Total Room Cost: Rs.{price.get('grand_total', 0):,.2f}\n\n"
+                          f"Select Meal Plan:",
                 "buttons": [
                     {"text": "MAP (Breakfast + Dinner)", "value": "map"},
                     {"text": "CP (Breakfast only)", "value": "cp"},
@@ -730,85 +827,84 @@ Based on current step, ask user for missing information or call appropriate tool
             meal = context.get("meal_details", {})
             hotel_name = context.get("selected_hotel", "Hotel")
             room = context.get("selected_room_data", {})
-            room_total = price.get("grand_total", 0)
-            meal_total = meal.get("total_meal_price", 0)
-            grand_total = room_total + meal_total
-            meal_cost_line = f"Rs.{meal_total:,.2f}" if meal_total > 0 else "Rs.0.00 (included)"
-            
             full_hotel = context.get("full_hotel_details", {})
             
-            hotel_info = ""
-            if full_hotel:
-                hotel_info = f"""
-HOTEL INFORMATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # Get hotel details
+            display_hotel_name = full_hotel.get('hotel_name', hotel_name)
+            hotel_category = full_hotel.get('category', context.get('selected_category', 'N/A'))
+            hotel_location = full_hotel.get('location', context.get('destination', 'N/A'))
+            
+            # Get room details
+            room_category = room.get('room_category', room.get('category', 'N/A'))
+            room_type = room.get('room_type', room.get('type', 'N/A'))
+            min_capacity = room.get('minimum_capacity', 'N/A')
+            max_capacity = room.get('maximum_capacity', 'N/A')
+            extra_person_capacity = room.get('extra_person_capacity', 'N/A')
+            base_price = int(room.get('base_price', 0))
+            extra_person_price = int(room.get('extra_person_price', 0))
+            
+            # Get price details
+            rooms_needed = price.get('rooms_needed', 1)
+            nights = price.get('nights', 0)
+            room_total = price.get('room_total', 0)
+            extra_total = price.get('extra_total', 0)
+            extra_people = price.get('extra_people', 0)
+            season_used = price.get('season_used', 'Regular Rate')
+            
+            # Get seasonal pricing
+            seasonal_price_per_night = price.get('seasonal_base_price', base_price)
+            seasonal_extra_price = price.get('seasonal_extra_price', extra_person_price)
+            
+            # Get meal details
+            meal_name = meal.get('meal_name', 'No meals')
+            meal_total = meal.get('total_meal_price', 0)
+            
+            # Calculate totals
+            room_cost_calculation = f"{rooms_needed} rooms x Rs.{seasonal_price_per_night} x {nights} nights"
+            extra_cost_calculation = f"{extra_people} extra persons x Rs.{seasonal_extra_price} x {nights} nights" if extra_people > 0 else "None"
+            
+            grand_total = room_total + extra_total + meal_total
+            
+            # Build clean summary card without dashes and underscores
+            content = f"""
+YOUR BOOKING SUMMARY
 
-Hotel Name: {full_hotel.get('hotel_name', hotel_name)}
-Category: {full_hotel.get('category', 'N/A')}
-Location: {full_hotel.get('location', context.get('destination', 'N/A'))}
+Destination: {hotel_location}
+Travel Dates: {context.get('check_in')} to {context.get('check_out')} ({nights} nights)
+Total Guests: {context.get('guests')} people
 
-Description:
-{full_hotel.get('description', 'No description available')[:500]}
+Hotel Details
+Hotel Name: {display_hotel_name}
+Category: {hotel_category}
 
-Contact:
-Phone: {', '.join(full_hotel.get('phones', [])) if full_hotel.get('phones') else 'N/A'}
-Email: {', '.join(full_hotel.get('emails', [])) if full_hotel.get('emails') else 'N/A'}
+Room Details
+Room Type: {room_category} - {room_type}
+Capacity: {min_capacity} - {max_capacity} guests per room
+Extra Person Capacity: {extra_person_capacity}
 
-Extra Services:
-{', '.join(full_hotel.get('extra_services', [])) if full_hotel.get('extra_services') else 'No extra services listed'}
+Pricing Breakdown
+Per Night Rates:
+Room Rate: Rs.{seasonal_price_per_night}/night/room
+Extra Person Rate: Rs.{seasonal_extra_price}/night/person
+Season Applied: {season_used}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Room Cost: Rs.{room_total:,.2f}
+({room_cost_calculation})
+
+Total Extra Persons Cost: Rs.{extra_total:,.2f}
+({extra_cost_calculation})
+
+Meal Plan: {meal_name}
+Meal Cost: Rs.{meal_total:,.2f}
+
+GRAND TOTAL: Rs.{grand_total:,.2f}
 """
-            
-            room_facilities = ""
-            if room.get('facilities'):
-                room_facilities = "\nFacilities:\n" + "\n".join([f"  • {f}" for f in room.get('facilities', [])])
-            
-            seasonal_info = ""
-            if room.get('seasons'):
-                seasonal_info = "\n\nSeasonal Pricing (for reference):"
-                for season in room.get('seasons', [])[:4]:
-                    seasonal_info += f"\n  • {season.get('season_name', 'Unknown')}: Rs.{season.get('price', 'N/A')}/night (Extra: Rs.{season.get('extra_price', 'N/A')})"
-            
-            room_details = f"""
-ROOM DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Room Type: {room.get('category', 'N/A')} - {room.get('type', 'N/A')}
-Capacity: {room.get('min_capacity', 'N/A')} - {room.get('max_capacity', 'N/A')} guests
-Base Price: Rs.{room.get('base_price', 0)}/night
-Extra Person Price: Rs.{room.get('extra_person_price', 0)}/night{room_facilities}{seasonal_info}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-BOOKING SUMMARY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Guests: {context.get('guests')}
-Check-in: {context.get('check_in')}
-Check-out: {context.get('check_out')}
-Nights: {price.get('nights', 0)}
-
-Meal Plan: {meal.get('meal_name', 'No meals')}
-Meal Cost: {meal_cost_line}
-
-Price Breakdown:
-Room Total: Rs.{room_total:,.2f}
-Meal Total: {meal_cost_line}
-Grand Total: Rs.{grand_total:,.2f}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Confirm your booking?
-"""
-            
-            content = hotel_info + room_details
             
             return {
                 "type": "buttons",
-                "content": content,
+                "content": content.strip(),
                 "buttons": [
-                    {"text": "Confirm Booking", "value": "confirm"},
+                    {"text": "📖 BOOK NOW", "value": "confirm"},
                     {"text": "Change Meal Plan", "value": "change_meal_plan"},
                     {"text": "Other Hotels", "value": "other_hotels"}
                 ]
