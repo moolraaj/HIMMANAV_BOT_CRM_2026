@@ -8,24 +8,19 @@ load_dotenv()
 
 _agent = AIHotelAgent()
 
-def process_message(user_input: str, phone: str, state: dict, sender_phone_number_id: str = None) -> dict:
+
+def process_message(user_input: str, phone: str, state: dict,
+                    sender_phone_number_id: str = None) -> dict:
     if not user_input or not user_input.strip():
         return {"type": "text", "content": "Hi! Are you looking for hotels or travel packages?"}
 
-    # Resolve display phone from DB using sender_phone_number_id
     display_phone = _resolve_display_phone(sender_phone_number_id)
-
     response = _agent.execute(phone, user_input, state, business_phone=display_phone)
 
-    # Session key used internally
+    # Persist session context back into state so it survives across requests
     session_key = f"{display_phone}:{phone}"
-
     if session_key in _agent.sessions:
         state["data"] = copy.deepcopy(_agent.sessions[session_key].get("context", {}))
-
-    pkg_agent = getattr(_agent, "package_agent", None)
-    if pkg_agent and session_key in pkg_agent.sessions:
-        state["package_data"] = copy.deepcopy(pkg_agent.sessions[session_key].get("context", {}))
 
     return response
 
@@ -54,7 +49,3 @@ def _resolve_display_phone(sender_phone_number_id: str) -> str:
 def reset_session(phone: str, sender_phone_number_id: str = None):
     display_phone = _resolve_display_phone(sender_phone_number_id)
     _agent.reset_session(phone, business_phone=display_phone)
-
-    pkg_agent = getattr(_agent, "package_agent", None)
-    if pkg_agent:
-        pkg_agent.reset_session(phone, business_phone=display_phone)

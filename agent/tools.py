@@ -9,9 +9,6 @@ load_dotenv('.env')
 BASE = os.getenv('WP_API_BASE')
 logger = logging.getLogger(__name__)
 
- 
-
-
 CATEGORIES_API          = f"{BASE}/hotel-categories"
 HOTELS_BY_CATEGORY_API  = f"{BASE}/hotel-categories"
 ALL_HOTELS_API          = f"{BASE}/hotels"
@@ -23,14 +20,10 @@ ROOM_PRICES_API         = f"{BASE}/room-prices"
 VEHICLE_PRICES_API      = f"{BASE}/vehicle-prices"
 ACTIVITIES_PRICES_API   = f"{BASE}/activities-prices"
 
-print(f'ALL_HOTELS_API',ALL_HOTELS_API)
+print(f'ALL_HOTELS_API', ALL_HOTELS_API)
 
 
 def _get_display_phone(sender_phone_number_id: str) -> str:
-    """
-    Fetch the display_phone_number from DB using the sender_phone_number_id.
-    Falls back to empty string if not found.
-    """
     try:
         from database.database import get_whatsapp_config
         config = get_whatsapp_config(sender_phone_number_id)
@@ -61,7 +54,6 @@ class TravelTools:
         else:
             self.phone = ""
             logger.warning("TravelTools created without phone")
-
         logger.info(f"TravelTools initialized with phone={self.phone}")
 
     def _phone_params(self) -> Dict:
@@ -238,7 +230,6 @@ class TravelTools:
     # ── PACKAGES ──────────────────────────────────────────────────────────────
 
     def get_packages(self, destination: str = None) -> Dict[str, Any]:
-        """Fetch travel packages, optionally filtered by destination."""
         try:
             params = self._phone_params()
             response = requests.get(PACKAGES_API, params=params, timeout=30)
@@ -372,7 +363,6 @@ class TravelTools:
 
     @staticmethod
     def validate_dates(check_in: str, check_out: str) -> Dict[str, Any]:
-        """Validate check-in and check-out dates."""
         try:
             today = datetime.now().date()
             check_in_date = datetime.strptime(check_in, "%Y-%m-%d").date()
@@ -417,14 +407,23 @@ class TravelTools:
                 except ValueError:
                     continue
 
-                if season_start > season_end:
-                    if check_in_date >= season_start or check_in_date <= season_end:
+                # ── FIX: compare month/day only — ignore the year on season dates ──
+                s_md  = (season_start.month, season_start.day)
+                e_md  = (season_end.month,   season_end.day)
+                ci_md = (check_in_date.month, check_in_date.day)
+                co_md = (check_out_date.month, check_out_date.day)
+
+                if s_md > e_md:           # season wraps year-end (e.g. Dec–Mar)
+                    if ci_md >= s_md or ci_md <= e_md:
                         return season
-                else:
-                    if season_start <= check_in_date <= season_end:
+                    if co_md >= s_md or co_md <= e_md:
                         return season
-                if season_start <= check_out_date <= season_end:
-                    return season
+                else:                     # normal season within one calendar year
+                    if s_md <= ci_md <= e_md:
+                        return season
+                    if s_md <= co_md <= e_md:
+                        return season
+
             return None
         except Exception as e:
             logger.error(f"Season matching error: {e}")

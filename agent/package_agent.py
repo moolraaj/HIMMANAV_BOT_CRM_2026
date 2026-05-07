@@ -9,65 +9,69 @@ from datetime import datetime, timedelta, date
 from openai import OpenAI
 from agent.tools import TravelTools
 import re
+
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SMART DATE PARSER - Using LLM for natural language understanding
+# PROMPTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def smart_parse_dates_with_llm(text: str, today: date) -> Dict[str, Optional[str]]:
-    """
-    Parse natural-language date expressions using LLM.
-    Returns {"check_in": "YYYY-MM-DD" | None, "check_out": "YYYY-MM-DD" | None}
-    """
-    client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
-    
-    today_str = today.strftime("%Y-%m-%d")
-    
-    prompt = f"""Today is {today_str}. Parse the user's date request and return check-in and check-out dates.
+PACKAGE_INTENT_PROMPT = """You are a travel package booking intent extractor.
 
-User message: "{text}"
+Given a user message and today's date, extract as much info as possible.
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+  "destination": "city name" | null,
+  "check_in": "YYYY-MM-DD" | null,
+  "check_out": "YYYY-MM-DD" | null,
+  "guests": integer | null,
+  "confirm_booking": true | false,
+  "possible_city": "raw word if it might be a misspelled city" | null,
+  "confidence": "high" | "medium" | "low"
+}}
 
 Rules:
-- Check-in must be TODAY or FUTURE (cannot be past)
-- Check-out must be AFTER check-in
-- Default stay duration: 4 nights if not specified
-- If user says "12 to 16" without month → use current month (or next month if dates passed)
-- If user says "12 june to 16 june" → use June of current year (or next year if passed)
-- If user says "after 10 days" → check_in = today + 10 days, check_out = check_in + 4 days
-- If user says "next week" → next Monday to Sunday
-- If user says "this weekend" → coming Saturday to Sunday
+- Today is {today}. Convert relative dates like "12 to 14", "12 june to 16 june", "next week", "after 10 days" to YYYY-MM-DD.
+- If only day numbers given like "12 to 14" → use current month (or next month if dates passed).
+- If month not specified, assume current year. If date has passed, assume next month.
+- "10 people" or "10 guests" or "for 10" → guests: 10
+- If message contains "book now", "confirm", "yes book", "okay book", "proceed", "finalize", "done book", "book it", "yes confirm" → confirm_booking: true
+- destination should only be set if you are confident it is a real, correctly spelled city.
+- If a word looks like it could be a city name but you are not sure it is real, put it in possible_city.
+- Return null for anything not mentioned — do NOT guess.
 
-Return ONLY JSON:
-{{"check_in": "YYYY-MM-DD or null", "check_out": "YYYY-MM-DD or null", "error": null or "error message"}}
+User message: "{message}"
 """
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        result = json.loads(response.choices[0].message.content)
-        
-        if result.get("error"):
-            return {"check_in": None, "check_out": None, "date_error": result["error"]}
-        
-        # Validate dates
-        if result.get("check_in") and result.get("check_out"):
-            ci = date.fromisoformat(result["check_in"])
-            co = date.fromisoformat(result["check_out"])
-            if ci < today:
-                return {"check_in": None, "check_out": None, "date_error": f"Check-in date {result['check_in']} is in the past."}
-            if co <= ci:
-                return {"check_in": None, "check_out": None, "date_error": "Check-out must be after check-in."}
-            return {"check_in": result["check_in"], "check_out": result["check_out"], "date_error": None}
-        
-        return {"check_in": None, "check_out": None, "date_error": result.get("error", "Could not parse dates")}
-    except Exception as e:
-        logger.error(f"Date parsing error: {e}")
-        return {"check_in": None, "check_out": None, "date_error": str(e)}
+
+CITY_VALIDATION_PROMPT = """The user is trying to book a travel package and typed: "{city}"
+
+Is this a real city, town, hill station, or tourist destination anywhere in the world?
+OR is it a misspelling/typo of a real place?
+
+Return ONLY valid JSON:
+{{
+  "valid": true,
+  "corrected": "correct name if different from input, else null",
+  "message": null
+}}
+OR if not valid and not a recognizable misspelling:
+{{
+  "valid": false,
+  "corrected": null,
+  "message": "friendly short message explaining you don't recognize this place"
+}}
+OR if it looks like a misspelling:
+{{
+  "valid": false,
+  "corrected": "the real place name you think they meant",
+  "message": "Did you mean [place]? Please confirm or type the correct city name."
+}}
+
+Be generous — include small towns, pilgrimage sites, hill stations, villages etc.
+Be smart about common misspellings: shila=Shimla, mnsali=Manali, dlehi=Delhi, goa=Goa (valid), mumbai=Mumbai (valid).
+Always return the message field — it will be shown directly to the user."""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -114,6 +118,7 @@ CRITICAL RULES:
 - Meal plan is always MAP (Breakfast + Dinner)
 - Vehicle price is FLAT for entire trip
 - Do NOT use emoji in responses except BOOK NOW button
+- Ask ONLY for the next missing field — do not repeat questions already answered
 """
 
     @staticmethod
@@ -143,6 +148,119 @@ CRITICAL RULES:
         }
 
     # ─────────────────────────────────────────────────────────────────────────
+    # INTENT EXTRACTION  (same pattern as hotel agent)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _extract_intent(self, message: str) -> Dict:
+        today = datetime.now().strftime("%Y-%m-%d")
+        prompt = PACKAGE_INTENT_PROMPT.format(today=today, message=message)
+        try:
+            resp = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                max_tokens=300,
+            )
+            result = json.loads(resp.choices[0].message.content)
+            logger.info(f"📦 Package intent extracted: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Package intent extraction error: {e}")
+            return {
+                "destination": None, "check_in": None, "check_out": None,
+                "guests": None, "confirm_booking": False, "possible_city": None,
+                "confidence": "low"
+            }
+
+    def _validate_city(self, city: str) -> Dict:
+        """Same city validation as hotel agent."""
+        try:
+            resp = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": CITY_VALIDATION_PROMPT.format(city=city)}],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                max_tokens=100,
+            )
+            result = json.loads(resp.choices[0].message.content)
+            logger.info(f"🏙️ Package city validation for '{city}': {result}")
+            return result
+        except Exception:
+            return {"valid": True, "corrected": None, "message": None}  # fail open
+
+    def _validate_dates(self, check_in: str, check_out: str) -> Dict:
+        """Same date validation as hotel agent."""
+        try:
+            today = datetime.now().date()
+            ci = datetime.strptime(check_in, "%Y-%m-%d").date()
+            co = datetime.strptime(check_out, "%Y-%m-%d").date()
+            if ci < today:
+                return {"valid": False, "error": f"Check-in date {check_in} is in the past."}
+            if co <= ci:
+                return {"valid": False, "error": "Check-out must be after check-in."}
+            return {"valid": True, "nights": (co - ci).days}
+        except ValueError:
+            return {"valid": False, "error": "Invalid date format."}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MISSING FIELD CHECKER  (same pattern as hotel agent)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _get_missing_field(self, context: Dict) -> Optional[str]:
+        if not context.get("destination"):
+            return "destination"
+        if not context.get("check_in") or not context.get("check_out"):
+            return "dates"
+        if not context.get("guests"):
+            return "guests"
+        return None
+
+    def _ask_for_field(self, field: str, context: Dict) -> Dict:
+        if field == "destination":
+            return {"type": "text", "content": "Which destination are you looking for a package in?"}
+        if field == "dates":
+            dest = context.get("destination", "")
+            return {
+                "type": "text",
+                "content": (
+                    f"What are your travel dates for {dest}?\n"
+                    "Examples: 12 June to 16 June  |  12 to 16  |  next week  |  after 10 days"
+                )
+            }
+        if field == "guests":
+            return {"type": "text", "content": "How many guests will be travelling?"}
+        return {"type": "text", "content": "How can I help with your package booking?"}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # CONFIRM BOOKING HELPER
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _confirm_booking_response(self, context: Dict, phone: str, business_phone: str, state: dict) -> Dict:
+        pd = context.get("price_details", {})
+        total_price = pd.get("total_price", 0)
+        try:
+            total_str = f"Rs.{float(total_price):,.0f}"
+        except (ValueError, TypeError):
+            total_str = f"Rs.{total_price}"
+
+        self.reset_session(phone, business_phone=business_phone)
+        if state is not None:
+            state["package_data"] = self._default_context()
+
+        return {
+            "type": "text",
+            "content": (
+                f"BOOKING CONFIRMED\n\n"
+                f"Package: {context.get('selected_package', {}).get('package_name', 'Package')}\n"
+                f"Total: {total_str}\n"
+                f"Reference: PKG{datetime.now().strftime('%Y%m%d%H%M%S')}\n\n"
+                f"Thank you for booking with us! Have a wonderful trip.\n\n"
+                f"Type 'hi' to start a new booking!"
+            ),
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
     # MAIN ENTRY POINT
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -169,7 +287,9 @@ CRITICAL RULES:
         session["history"].append({"role": "user", "content": user_message})
         msg = user_message.strip().lower()
 
-        # ── Button handlers for dynamic API data ──────────────────────────────────
+        # ════════════════════════════════════════════════════════
+        #  BUTTON HANDLERS  (hard-coded button values)
+        # ════════════════════════════════════════════════════════
 
         # Hotel category (from API)
         hotel_cats = [c.get("name", "").lower() for c in (context.get("hotel_categories") or [])]
@@ -179,7 +299,7 @@ CRITICAL RULES:
             self._save(state, context)
             return self._fetch_and_show_room_categories(context)
 
-        # Room category (from API - NOT hardcoded!)
+        # Room category (from API)
         room_cats = [c.get("name", "").lower() for c in (context.get("room_categories") or [])]
         if msg in room_cats and not context.get("room_category"):
             context["room_category"] = user_message.strip()
@@ -261,81 +381,96 @@ CRITICAL RULES:
             self._save(state, context)
             return self._fetch_and_show_hotel_categories(context)
 
-        if msg == "book_now" or msg == "confirm_package":
-            response = self._confirm_booking(context)
-            self.reset_session(phone, business_phone=business_phone)
-            if state is not None:
-                state["package_data"] = self._default_context()
-            return response
+        # Confirm booking button
+        if msg in ("book_now", "confirm_package"):
+            return self._confirm_booking_response(context, phone, business_phone, state)
 
-        # ── Update guest count mid-flow ──────────────────────────────────────
-        guest_match = (re.search(r"we\s+are\s+(\d+)\s*(?:people|persons?|guests?|members?)?", msg) or
-                       re.search(r"(\d+)\s+(?:people|persons?|guests?|members?)", msg) or
-                       (msg.isdigit() and 1 <= int(msg) <= 20))
-        
-        if guest_match:
+        # ════════════════════════════════════════════════════════
+        #  NATURAL LANGUAGE HANDLING
+        #  Same pattern as hotel agent — single LLM call extracts
+        #  everything, then we validate and merge.
+        # ════════════════════════════════════════════════════════
+
+        intent = self._extract_intent(user_message)
+
+        # ── FIX: Confirm booking via free text ────────────────────
+        if intent.get("confirm_booking") and context.get("step") in ("show_itinerary", "final_summary"):
+            logger.info("✅ Package free-text booking confirmation detected")
+            return self._confirm_booking_response(context, phone, business_phone, state)
+
+        # ── Guest update mid-flow → recalculate if price exists ───
+        if intent.get("guests"):
             try:
-                num_g = int(guest_match.group(1)) if hasattr(guest_match, 'group') and guest_match.group(1) else int(msg)
-                if 1 <= num_g <= 50 and num_g != context.get("guests"):
-                    context["guests"] = num_g
+                new_guests = int(intent["guests"])
+                if 1 <= new_guests <= 50:
+                    context["guests"] = new_guests
                     if context.get("selected_package") and context.get("price_details"):
                         context["step"] = "calculate_price"
                         self._save(state, context)
                         return self._calculate_and_show_price(context, state)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
-        # ── Smart date extraction using LLM ─────────────────────────────────
-        if not (context.get("check_in") and context.get("check_out")):
-            today = date.today()
-            date_result = smart_parse_dates_with_llm(user_message, today)
-            
-            if date_result["date_error"]:
-                context["date_error"] = date_result["date_error"]
+        # ── Smart city validation (same as hotel agent) ───────────
+        # Use confident city from intent, OR possible_city if we're
+        # still waiting for a destination.
+        city_to_check = intent.get("destination") or (
+            intent.get("possible_city")
+            if not context.get("destination")
+            else None
+        )
+
+        if city_to_check:
+            city_candidate = city_to_check.title()
+            city_check = self._validate_city(city_candidate)
+            logger.info(f"🏙️ Package city check for '{city_candidate}': {city_check}")
+
+            if city_check.get("valid"):
+                # Accept — use corrected spelling if LLM provided one
+                context["destination"] = city_check.get("corrected") or city_candidate
+                logger.info(f"✅ Package city accepted: {context['destination']}")
+            else:
+                # Show LLM's friendly message directly — same as hotel agent
+                error_msg = city_check.get("message") or (
+                    f"I don't recognise *{city_candidate}* as a city or destination. "
+                    f"Please check the spelling and try again."
+                )
+                self._save(state, context)
+                return {"type": "text", "content": f"⚠️ {error_msg}"}
+
+        # ── Merge dates ───────────────────────────────────────────
+        if intent.get("check_in"):
+            context["check_in"] = intent["check_in"]
+        if intent.get("check_out"):
+            context["check_out"] = intent["check_out"]
+
+        # ── Validate dates if just received ──────────────────────
+        if context.get("check_in") and context.get("check_out"):
+            validation = self._validate_dates(context["check_in"], context["check_out"])
+            if not validation.get("valid"):
+                context["check_in"] = None
+                context["check_out"] = None
                 self._save(state, context)
                 return {
                     "type": "text",
                     "content": (
-                        f"{date_result['date_error']}\n\n"
-                        "Please provide your travel dates again.\n"
-                        "Examples:\n"
-                        "  12 june to 16 june\n"
-                        "  12 to 16\n"
-                        "  after 10 days\n"
-                        "  next week"
+                        f"⚠️ {validation['error']} Please provide valid dates.\n"
+                        "Examples: 12 June to 16 June  |  12 to 16  |  next week"
                     )
                 }
-            
-            if date_result["check_in"] and date_result["check_out"]:
-                context["check_in"] = date_result["check_in"]
-                context["check_out"] = date_result["check_out"]
-                context["date_error"] = None
-                if context.get("step") == "ask_dates":
-                    context["step"] = "ask_guests" if not context.get("guests") else "ask_hotel_category"
-                self._save(state, context)
 
-        # ── LLM extraction for destination / guests ─────────────────────────
-        extracted = self._extract_info_with_llm(user_message, context)
-        self._apply_extracted_info(extracted, context)
+        # ── Merge guests (if not already handled above) ───────────
+        if not context.get("guests") and intent.get("guests"):
+            try:
+                g = int(intent["guests"])
+                if 1 <= g <= 50:
+                    context["guests"] = g
+            except (TypeError, ValueError):
+                pass
+
         self._save(state, context)
 
-        # Return date error if set
-        if context.get("date_error"):
-            err = context["date_error"]
-            context["date_error"] = None
-            return {
-                "type": "text",
-                "content": (
-                    f"{err}\n\n"
-                    "Please provide your travel dates.\n"
-                    "Examples:\n"
-                    "  12 june to 16 june\n"
-                    "  12 to 16\n"
-                    "  after 10 days"
-                )
-            }
-
-        # Auto-advance to show hotel categories once all basics collected
+        # ── Auto-advance once all basics collected ────────────────
         if (context.get("destination") and
                 context.get("check_in") and
                 context.get("check_out") and
@@ -345,69 +480,19 @@ CRITICAL RULES:
             self._save(state, context)
             return self._fetch_and_show_hotel_categories(context)
 
+        # ── Ask for next missing field (one at a time) ────────────
+        missing = self._get_missing_field(context)
+        if missing:
+            return self._ask_for_field(missing, context)
+
+        # ── Fallback to LLM for anything else ────────────────────
         return self._llm_next_question(session, context)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # LLM EXTRACTION for destination and guests only
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _extract_info_with_llm(self, message: str, context: Dict) -> Dict:
-        extraction_prompt = f"""
-Extract ONLY the following fields from the user message. Return JSON ONLY.
-
-Fields:
-- destination: city/town name (string or null)
-- guests: number of people travelling (integer or null)
-
-Already collected (do NOT override):
-- Destination: {context.get('destination')}
-- Guests: {context.get('guests')}
-
-User message: "{message}"
-
-Return ONLY this JSON:
-{{"destination": "... or null", "guests": null}}
-"""
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": extraction_prompt}],
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
-            result = json.loads(response.choices[0].message.content)
-            logger.info(f"Package LLM extraction: {result}")
-            return result
-        except Exception as e:
-            logger.error(f"Package extraction error: {e}")
-            return {"destination": None, "guests": None}
-
-    def _apply_extracted_info(self, extracted: Dict, context: Dict) -> bool:
-        changed = False
-
-        if not context.get("destination") and extracted.get("destination"):
-            context["destination"] = extracted["destination"].title()
-            if context.get("step") == "ask_destination":
-                context["step"] = "ask_dates"
-            changed = True
-
-        if not context.get("guests") and extracted.get("guests"):
-            try:
-                g = int(extracted["guests"])
-                if 1 <= g <= 50:
-                    context["guests"] = g
-                    changed = True
-            except (TypeError, ValueError):
-                pass
-
-        return changed
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # FETCH & DISPLAY - ALL FROM API, NOTHING HARDCODED
+    # FETCH & DISPLAY  — ALL FROM API, NOTHING HARDCODED
     # ─────────────────────────────────────────────────────────────────────────
 
     def _fetch_and_show_hotel_categories(self, context: Dict) -> Dict:
-        """Fetch hotel categories from API - NOT hardcoded"""
         result = self.tools.get_categories()
         context["hotel_categories"] = result.get("categories", [])
         if not context["hotel_categories"]:
@@ -420,19 +505,14 @@ Return ONLY this JSON:
         }
 
     def _fetch_and_show_room_categories(self, context: Dict) -> Dict:
-        """Fetch room categories from API - NOT hardcoded!"""
         result = self.tools.get_room_categories()
         logger.info(f"Room categories API response: {result}")
-        
         if result.get("success") and result.get("room_categories"):
             context["room_categories"] = result.get("room_categories", [])
         else:
-            # Try alternative API endpoint if needed
             context["room_categories"] = []
-        
         if not context["room_categories"]:
-            return {"type": "text", "content": "No room categories available from API. Please try again later."}
-        
+            return {"type": "text", "content": "No room categories available. Please try again later."}
         buttons = [{"text": c["name"], "value": c["name"]} for c in context["room_categories"] if c.get("name")]
         return {
             "type": "buttons_grid",
@@ -441,7 +521,6 @@ Return ONLY this JSON:
         }
 
     def _fetch_and_show_vehicle_categories(self, context: Dict) -> Dict:
-        """Fetch vehicle categories from API - NOT hardcoded"""
         result = self.tools.get_vehicle_categories()
         if not result.get("success") or not result.get("vehicle_categories"):
             return {"type": "text", "content": "Unable to fetch vehicle categories. Please try again later."}
@@ -450,7 +529,6 @@ Return ONLY this JSON:
         return {"type": "buttons_grid", "content": "Select Vehicle Type:", "buttons": buttons}
 
     def _fetch_and_show_vehicles_by_type(self, context: Dict, slug: str) -> Dict:
-        """Fetch vehicles by type from API - NOT hardcoded"""
         try:
             result = self.tools.get_vehicles_by_type(slug)
             if not result.get("success") or not result.get("vehicles"):
@@ -485,15 +563,12 @@ Return ONLY this JSON:
             return {"type": "text", "content": f"Error loading vehicles: {str(e)}"}
 
     def _fetch_and_show_packages(self, context: Dict) -> Dict:
-        """Fetch packages from API - NOT hardcoded"""
         try:
             result = self.tools.get_packages(context["destination"])
             if not result.get("success"):
                 return {"type": "text", "content": "Unable to fetch packages. Please try again."}
-            
             matched = result.get("packages", [])
             context["packages_list"] = matched
-            
             if matched:
                 return self._show_packages(context)
             return {
@@ -533,21 +608,29 @@ Return ONLY this JSON:
     def _find_matching_season(self, seasons: List[Dict],
                                check_in_date: datetime,
                                check_out_date: datetime) -> Optional[Dict]:
+        """Year-agnostic season matching — same fix as tools.py."""
         try:
             for season in seasons:
                 season_start = self._parse_date(season.get("starting_date", ""))
                 season_end = self._parse_date(season.get("end_date", ""))
                 if not season_start or not season_end:
                     continue
-                if season_start > season_end:
-                    if check_in_date >= season_start or check_in_date <= season_end:
+
+                # Compare month/day only — ignore year on season dates
+                s_md  = (season_start.month, season_start.day)
+                e_md  = (season_end.month,   season_end.day)
+                ci_md = (check_in_date.month, check_in_date.day)
+                co_md = (check_out_date.month, check_out_date.day)
+
+                if s_md > e_md:           # season wraps year-end (e.g. Dec–Mar)
+                    if ci_md >= s_md or ci_md <= e_md:
                         return season
-                    if check_out_date >= season_start or check_out_date <= season_end:
+                    if co_md >= s_md or co_md <= e_md:
                         return season
-                else:
-                    if season_start <= check_in_date <= season_end:
+                else:                     # normal season within one calendar year
+                    if s_md <= ci_md <= e_md:
                         return season
-                    if season_start <= check_out_date <= season_end:
+                    if s_md <= co_md <= e_md:
                         return season
             return None
         except Exception as e:
@@ -846,28 +929,8 @@ Return ONLY this JSON:
             ],
         }
 
-    def _confirm_booking(self, context: Dict) -> Dict:
-        pd = context.get("price_details", {})
-        total_price = pd.get("total_price", 0)
-        try:
-            total_str = f"Rs.{float(total_price):,.0f}"
-        except (ValueError, TypeError):
-            total_str = f"Rs.{total_price}"
-
-        return {
-            "type": "text",
-            "content": (
-                f"BOOKING CONFIRMED\n\n"
-                f"Package: {context.get('selected_package', {}).get('package_name', 'Package')}\n"
-                f"Total: {total_str}\n"
-                f"Reference: PKG{datetime.now().strftime('%Y%m%d%H%M%S')}\n\n"
-                f"Thank you for booking with us! Have a wonderful trip.\n\n"
-                f"Type 'hi' to start a new booking!"
-            ),
-        }
-
     # ─────────────────────────────────────────────────────────────────────────
-    # LLM FALLBACK
+    # LLM FALLBACK  (only for truly ambiguous cases)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _llm_next_question(self, session: Dict, context: Dict) -> Dict:
@@ -882,11 +945,7 @@ PACKAGE FLOW STATUS:
 - Room Category: {context.get('room_category') or 'Not selected'}
 - Vehicle: {context.get('vehicle', {}).get('name') if context.get('vehicle') else 'Not selected'}
 
-Ask ONLY for the next missing piece of information.
-When asking for dates, give examples:
-  "12 june to 16 june"
-  "12 to 16 (this month)"
-  "after 10 days"
+Ask ONLY for the next missing piece of information. Do NOT ask for anything already collected above.
 """
         try:
             resp = self.client.chat.completions.create(
@@ -918,6 +977,3 @@ When asking for dates, give examples:
         if session_key in self.sessions:
             del self.sessions[session_key]
             logger.info(f"Package session reset for {session_key}")
-
-
- 
