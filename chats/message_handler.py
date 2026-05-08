@@ -102,7 +102,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
 
     print(f"📱 {user_phone} → {user_message}")
 
-    # Get display_phone_number from sender config if not passed in
+     
     display_phone_number_raw = None
 
     if display_phone_number:
@@ -115,9 +115,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
                 display_phone_number_raw = normalize_phone_number(dn)
                 display_phone_number = display_phone_number_raw
 
-    # ============================================================
-    # AGENT IN CONTROL — save message and emit, no bot processing
-    # ============================================================
+ 
     agent_in_control = is_agent_active(user_phone)
 
     if agent_in_control:
@@ -148,9 +146,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
             )
         return
 
-    # ============================================================
-    # NORMAL BOT PROCESSING (using Agent)
-    # ============================================================
+ 
 
     user = get_or_create_user(user_phone, display_phone_number_raw)
     user_id = user["user_id"]
@@ -162,7 +158,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
         update_username(user_phone, name)
         print(f"📝 Updated username for {user_phone}: {name}")
 
-    # Save incoming user message to DB
+   
     messages.insert_one({
         "user_phone": user_phone,
         "user_id": user_id,
@@ -173,7 +169,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
         "display_phone_number_raw": display_phone_number_raw
     })
 
-    # Emit user message to frontend
+   
     if emit_fn and display_phone_number:
         emit_fn(
             user_phone=user_phone,
@@ -185,8 +181,7 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
             display_phone_number=display_phone_number
         )
 
-    # ── Build state — include sender_phone_number_id so bot.py can
-    #    look up the display phone and scope the session correctly. ──
+ 
     state = {
         "user_phone": user_phone,
         "step": "greeting",

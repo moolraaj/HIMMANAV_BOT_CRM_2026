@@ -288,14 +288,11 @@ class AIHotelAgent:
             if svc == "package":
                 return {
                     "type": "text",
-                    "content": (
-                        f"What are your travel dates for {dest}?\n"
-                        "Examples: 12 June to 16 June  |  12 to 16  |  next week  |  after 10 days"
-                    )
+                    "content": f"What are your travel dates for {dest}?"
                 }
             return {
                 "type": "text",
-                "content": f"What are your check-in and check-out dates for {dest}? (e.g. 14 May to 20 May)"
+                "content": f"What are your check-in and check-out dates for {dest}?"
             }
         if field == "guests":
             return {"type": "text", "content": "How many guests will be travelling?"}
@@ -403,9 +400,8 @@ class AIHotelAgent:
         return {
             "type": "buttons_grid",
             "content": (
-                f"🏨 *SELECT HOTEL CATEGORY*\n"
-                f"─────────────────────────\n"
-                f"📍 Destination: *{context.get('destination')}*\n\n"
+                f"*SELECT HOTEL CATEGORY*\n\n"
+                f"Destination: *{context.get('destination')}*\n\n"
                 f"Choose your preferred hotel type:"
             ),
             "buttons": buttons,
@@ -423,9 +419,8 @@ class AIHotelAgent:
         return {
             "type": "buttons_grid",
             "content": (
-                f"🚪 *SELECT ROOM CATEGORY*\n"
-                f"─────────────────────────\n"
-                f"🏨 Hotel: *{context.get('hotel_category')}*\n\n"
+                f"*SELECT ROOM CATEGORY*\n\n"
+                f"Hotel: *{context.get('hotel_category')}*\n\n"
                 f"Choose your preferred room type:"
             ),
             "buttons": buttons,
@@ -442,8 +437,7 @@ class AIHotelAgent:
         return {
             "type": "buttons_grid",
             "content": (
-                f"🚗 *SELECT VEHICLE TYPE*\n"
-                f"─────────────────────────\n"
+                f"*SELECT VEHICLE TYPE*\n\n"
                 f"Choose how you'd like to travel:"
             ),
             "buttons": buttons,
@@ -456,9 +450,8 @@ class AIHotelAgent:
                 return {"type": "text", "content": f"No vehicles available in {slug} category. Please select another type."}
             vehicles = result.get("vehicles", [])
 
-            content  = f"🚗 *{slug.upper()} VEHICLES*\n"
-            content += "─────────────────────────\n"
-            content += "ℹ️  Vehicle price is *FLAT* for entire trip (not per person)\n\n"
+            content  = f"*{slug.upper()} VEHICLES*\n\n"
+            content += "Vehicle price is FLAT for entire trip (not per person)\n\n"
 
             buttons = []
             for i, v in enumerate(vehicles):
@@ -470,18 +463,18 @@ class AIHotelAgent:
                 except (ValueError, TypeError):
                     price_str = f"Rs.{v.get('price', 0)}"
 
-                content += f"┌─ *{i + 1}. {name}*\n"
-                content += f"│  💰 {price_str} (flat for entire trip)\n"
+                content += f"*{i + 1}. {name}*\n"
+                content += f"Price: {price_str} (flat for entire trip)\n"
                 if str(capacity) != "N/A":
-                    content += f"│  👥 Capacity: {capacity} persons\n"
-                content += "└─────────────────────────\n\n"
+                    content += f"Capacity: {capacity} persons\n"
+                content += "\n"
 
                 buttons.append({"text": name, "value": f"select_vehicle_{i}"})
 
             context["vehicles_list"] = vehicles
             context["step"] = "pkg_ask_vehicle"
             self._save(state, context)
-            content += "👇 Select your vehicle:"
+            content += "Select your vehicle:"
             return {"type": "buttons_grid", "content": content, "buttons": buttons}
 
         except Exception as e:
@@ -844,18 +837,17 @@ class AIHotelAgent:
                         return {
                             "type": "buttons",
                             "content": (
-                                f"🚪 *Room Selected*\n"
-                                f"─────────────────────────\n"
-                                f"🏨 *{context.get('selected_hotel')}*\n"
-                                f"🛏️ {room.get('category')} — {room.get('type')}\n\n"
-                                f"💰 *Room Total:* ₹{price_result['grand_total']:,.2f} "
+                                f"*Room Selected*\n\n"
+                                f"*{context.get('selected_hotel')}*\n"
+                                f"{room.get('category')} — {room.get('type')}\n\n"
+                                f"*Room Total:* Rs.{price_result['grand_total']:,.0f} "
                                 f"({price_result['nights']} nights / {price_result['rooms_needed']} room(s))\n\n"
-                                f"🍽️ Select your *meal plan*:"
+                                f"Select your *meal plan*:"
                             ),
                             "buttons": [
-                                {"text": "🍽️ MAP — Breakfast + Dinner", "value": "map"},
-                                {"text": "☕ CP  — Breakfast only",     "value": "cp"},
-                                {"text": "❌ EP  — No meals",            "value": "ep"},
+                                {"text": "MAP — Breakfast + Dinner", "value": "map"},
+                                {"text": "CP  — Breakfast only",     "value": "cp"},
+                                {"text": "EP  — No meals",           "value": "ep"},
                             ],
                         }
                     return {"type": "text", "content": "Couldn't calculate the price. Please try again."}
@@ -884,11 +876,11 @@ class AIHotelAgent:
                 self._save(state, context)
                 return {
                     "type": "buttons",
-                    "content": "🍽️ *Select your meal plan:*",
+                    "content": "*Select your meal plan:*",
                     "buttons": [
-                        {"text": "🍽️ MAP — Breakfast + Dinner", "value": "map"},
-                        {"text": "☕ CP  — Breakfast only",     "value": "cp"},
-                        {"text": "❌ EP  — No meals",            "value": "ep"},
+                        {"text": "MAP — Breakfast + Dinner", "value": "map"},
+                        {"text": "CP  — Breakfast only",     "value": "cp"},
+                        {"text": "EP  — No meals",           "value": "ep"},
                     ],
                 }
 
@@ -1112,7 +1104,10 @@ class AIHotelAgent:
                 self._save(state, context)
                 return {
                     "type": "text",
-                    "content": f"⚠️ {validation['error']} Please provide valid dates."
+                    "content": (
+                        f"⚠️ {validation['error']} Please provide valid dates.\n\n"
+                        "Examples: 12 June to 16 June  |  12 to 16  |  next week  |  after 10 days"
+                    )
                 }
 
         # ── Merge guests (secondary fallback) ─────────────────────

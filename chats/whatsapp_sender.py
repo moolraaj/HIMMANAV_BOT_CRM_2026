@@ -81,24 +81,33 @@ def send_whatsapp_message(to_phone: str, response: dict, sender_phone_number_id:
 
 
 def send_single_message(to_phone: str, response: dict, url: str, headers: dict):
-    """Send a single message — handles text, buttons, buttons_grid, image."""
+    """Send a single message — handles text, buttons, buttons_grid, image, image with buttons."""
     try:
         msg_type = response.get("type", "text")
         logger.info(f"📨 Sending {msg_type} message to {to_phone}")
 
-        # ── IMAGE ──────────────────────────────────────────────────────────────
+        # ── IMAGE with buttons (interactive image message) ──────────────────────
         if msg_type == "image":
-            data = {
-                "messaging_product": "whatsapp",
-                "to": to_phone,
-                "type": "image",
-                "image": {
-                    "link": response.get("content", ""),
-                    "caption": response.get("caption", "")
+            image_url = response.get("content", "")
+            caption = response.get("caption", "")
+            buttons = response.get("buttons", [])
+            
+            if buttons and len(buttons) > 0:
+                # Send as interactive image with buttons (WhatsApp supports this)
+                return _send_image_with_buttons(to_phone, image_url, caption, buttons, url, headers)
+            else:
+                # Plain image without buttons
+                data = {
+                    "messaging_product": "whatsapp",
+                    "to": to_phone,
+                    "type": "image",
+                    "image": {
+                        "link": image_url,
+                        "caption": caption
+                    }
                 }
-            }
-            res = safe_post(url, headers, data)
-            return res.json() if res and res.status_code == 200 else None
+                res = safe_post(url, headers, data)
+                return res.json() if res and res.status_code == 200 else None
 
         # ── BUTTONS (plain, max 3 per batch) ──────────────────────────────────
         elif msg_type == "buttons":
@@ -111,8 +120,6 @@ def send_single_message(to_phone: str, response: dict, url: str, headers: dict):
             return _send_buttons_in_batches(to_phone, content, buttons, url, headers)
 
         # ── BUTTONS_GRID (many buttons → WhatsApp list message) ───────────────
-        # WhatsApp does not have a native grid, so we use a List Message
-        # which is the closest equivalent and supports up to 10 items per section.
         elif msg_type == "buttons_grid":
             content  = response.get("content", "")
             buttons  = response.get("buttons", [])
@@ -135,6 +142,55 @@ def send_single_message(to_phone: str, response: dict, url: str, headers: dict):
         logger.exception(f"❌ send_single_message error: {e}")
         return None
 
+
+
+def _send_image_with_buttons(to_phone: str, image_url: str, caption: str, buttons: list, url: str, headers: dict):
+    """
+    Send an image with interactive buttons (WhatsApp supports this).
+    Note: WhatsApp only allows up to 3 buttons on an interactive message.
+    """
+    wb = []
+    for btn in buttons[:3]:
+        title = _clean_button_text(btn["text"], 20)
+        value = str(btn["value"])[:256]
+        wb.append({
+            "type": "reply",
+            "reply": {"id": value, "title": title}
+        })
+    
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "header": {
+                "type": "image",
+                "image": {"link": image_url}
+            },
+            "body": {"text": caption[:1024] if caption else " "},
+            "action": {"buttons": wb}
+        }
+    }
+    
+    res = safe_post(url, headers, data)
+    if res and res.status_code == 200:
+        logger.info(f"✅ Image with buttons sent to {to_phone}")
+        return res.json()
+    else:
+        # Fallback: send image and buttons separately
+        logger.warning(f"⚠️ Image with buttons failed, falling back to separate messages")
+        # Send image first
+        img_data = {
+            "messaging_product": "whatsapp",
+            "to": to_phone,
+            "type": "image",
+            "image": {"link": image_url, "caption": caption}
+        }
+        safe_post(url, headers, img_data)
+        time.sleep(0.3)
+        # Then send buttons
+        return _send_buttons_in_batches(to_phone, "Select an option:", buttons, url, headers)
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
