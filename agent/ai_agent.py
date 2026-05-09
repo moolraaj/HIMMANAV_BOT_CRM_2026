@@ -401,8 +401,8 @@ class AIHotelAgent:
             "type": "buttons_grid",
             "content": (
                 f"*SELECT HOTEL CATEGORY*\n\n"
-                f"Destination: *{context.get('destination')}*\n\n"
-                f"Choose your preferred hotel type:"
+                f"*Destination* {context.get('destination')}\n\n"
+                f"Choose your preferred hotel type"
             ),
             "buttons": buttons,
         }
@@ -420,8 +420,8 @@ class AIHotelAgent:
             "type": "buttons_grid",
             "content": (
                 f"*SELECT ROOM CATEGORY*\n\n"
-                f"Hotel: *{context.get('hotel_category')}*\n\n"
-                f"Choose your preferred room type:"
+                f"*Hotel* {context.get('hotel_category')}\n\n"
+                f"Choose your preferred room type"
             ),
             "buttons": buttons,
         }
@@ -438,7 +438,7 @@ class AIHotelAgent:
             "type": "buttons_grid",
             "content": (
                 f"*SELECT VEHICLE TYPE*\n\n"
-                f"Choose how you'd like to travel:"
+                f"Choose how you'd like to travel"
             ),
             "buttons": buttons,
         }
@@ -451,30 +451,18 @@ class AIHotelAgent:
             vehicles = result.get("vehicles", [])
 
             content  = f"*{slug.upper()} VEHICLES*\n\n"
-            content += "Vehicle price is FLAT for entire trip (not per person)\n\n"
+             
 
             buttons = []
             for i, v in enumerate(vehicles):
                 name     = v.get("name", "Vehicle")
                 capacity = v.get("capacity", "N/A")
-                try:
-                    price = float(str(v.get("price", 0)).replace(",", ""))
-                    price_str = fp(price)
-                except (ValueError, TypeError):
-                    price_str = f"Rs.{v.get('price', 0)}"
-
-                content += f"*{i + 1}. {name}*\n"
-                content += f"Price: {price_str} (flat for entire trip)\n"
-                if str(capacity) != "N/A":
-                    content += f"Capacity: {capacity} persons\n"
-                content += "\n"
-
                 buttons.append({"text": name, "value": f"select_vehicle_{i}"})
 
             context["vehicles_list"] = vehicles
             context["step"] = "pkg_ask_vehicle"
             self._save(state, context)
-            content += "Select your vehicle:"
+            content += "Select your vehicle"
             return {"type": "buttons_grid", "content": content, "buttons": buttons}
 
         except Exception as e:
@@ -827,22 +815,29 @@ class AIHotelAgent:
                     price_result = self.execute_tool(
                         "calculate_room_price",
                         {"room": room, "check_in": context["check_in"],
-                         "check_out": context["check_out"], "guests": context["guests"]},
+                        "check_out": context["check_out"], "guests": context["guests"]},
                         tools,
                     )
                     if price_result.get("success"):
                         context["price_details"] = price_result
                         context["step"]          = "select_meal"
                         self._save(state, context)
+                        
+                      
+                        extra_info = ""
+                        if price_result.get('extra_people', 0) > 0:
+                            extra_info = f"\n  └ Extra ({price_result['extra_people']} persons): Rs.{price_result['extra_total']:,.0f}"
+                        
                         return {
                             "type": "buttons",
                             "content": (
                                 f"*Room Selected*\n\n"
                                 f"*{context.get('selected_hotel')}*\n"
-                                f"{room.get('category')} — {room.get('type')}\n\n"
-                                f"*Room Total:* Rs.{price_result['grand_total']:,.0f} "
-                                f"({price_result['nights']} nights / {price_result['rooms_needed']} room(s))\n\n"
-                                f"Select your *meal plan*:"
+                                f"*Room Category* {room.get('category')}\n"
+                                f"*Room Type* {room.get('type')}\n"
+                                f"*Room Total * Rs.{price_result['grand_total']:,.0f} "
+                                f"({price_result['nights']} nights / {price_result['rooms_needed']} room(s)){extra_info}\n\n"
+                                f"Select your *meal plan*"
                             ),
                             "buttons": [
                                 {"text": "MAP — Breakfast + Dinner", "value": "map"},

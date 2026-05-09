@@ -1,5 +1,14 @@
+ui_card.py
+
+# agent/ui_cards.py
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure UI / card-formatting helpers.
+# Every function returns a dict  { "type": ..., "content": ..., "buttons": ... }
+# NO business logic lives here — only presentation.
+# ─────────────────────────────────────────────────────────────────────────────
+
 from typing import Dict, List, Optional
-import json
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SHARED PRIMITIVES
@@ -9,9 +18,11 @@ def _section_header(title: str) -> str:
     """Bold section title."""
     return f"*{title.upper()}*\n\n"
 
+
 def _row(label: str, value: str) -> str:
     """Single label: value row."""
     return f"*{label}:* {value}\n"
+
 
 def fp(price) -> str:
     """Format price to Rs.X,XXX"""
@@ -77,190 +88,66 @@ def card_hotel_categories(context: Dict, error_category: str = None) -> Dict:
 
 
 def card_hotel_list(context: Dict) -> Dict:
-    """
-    Hotel listing - returns a list of cards, each card = image + hotel details + single button.
-    WhatsApp doesn't support multiple cards in one message, so we return a multi response
-    where each hotel is its own message with image, details, and a "View Rooms" button.
-    """
+    """Hotel listing cards."""
     hotels   = context.get("hotels_list", [])[:8]
     category = context.get("selected_category", "")
     dest     = context.get("destination", "")
 
-    responses = []
+    content  = _section_header(f"{category} Hotels in {dest}")
 
+    buttons = []
     for i, hotel in enumerate(hotels):
-        name      = hotel.get("name", "Unknown")
-        location  = hotel.get("location", "N/A")
-        desc      = hotel.get("description", "")
-        image_url = hotel.get("image", "")
-        
-        # Build the hotel details text (will be used as image caption)
-        caption = f"\n*{name}*"
-        caption += f"\n*Hotel Location* {location}"
-        caption += f"\n*Hotel Category* {category}"
-        
-        # 
-        if image_url and image_url.startswith(('http://', 'https://')):
-            # Send as image with caption
-            responses.append({
-                "type": "image",
-                "content": image_url,
-                "caption": caption,
-                "buttons": [{"text": "View Rooms", "value": f"view_rooms:{name}"},  {"text": "Back to Categories", "value": "back_to_categories"},
-            {"text": "Change City", "value": "change_city"}]
-            })
-        else:
-            # No image, send as text
-            text_content = f"*{i + 1}. {name}*\n"
-            text_content += f"*Location:* {location}\n"
-            if desc:
-                text_content += f"{desc[:100]}{'...' if len(desc) > 100 else ''}\n"
-            text_content += f"\n*Category:* {category}\n"
-            responses.append({
-                "type": "buttons",
-                "content": text_content,
-                "buttons": [{"text": "View Rooms", "value": f"view_rooms:{name}"},  {"text": "Back to Categories", "value": "back_to_categories"},
-            {"text": "Change City", "value": "change_city"}]
-            })
+        name     = hotel.get("name", "Unknown")
+        location = hotel.get("location", "N/A")
+        desc     = hotel.get("description", "")
 
-     
+        content += f"*{i + 1}. {name}*\n"
+        content += f"Location: {location}\n"
+        if desc:
+            content += f"{desc[:80]}{'...' if len(desc) > 80 else ''}\n"
+        content += "\n"
 
-    # Return multi response (multiple messages in sequence)
-    return {"type": "multi", "responses": responses}
+        buttons.append({"text": name[:30], "value": f"view_rooms:{name}"})
+
+    buttons.append({"text": "Back to Categories", "value": "back_to_categories"})
+    buttons.append({"text": "Change City",        "value": "change_city"})
+
+    content += "Select a hotel to view rooms:"
+    return {"type": "buttons_grid", "content": content, "buttons": buttons}
 
 
 def card_hotel_rooms(context: Dict) -> Dict:
-    """
-    Room listing - each room with image + room details + button.
-    Shows seasonal pricing based on user's check-in date.
-    """
+    """Room listing cards."""
     rooms      = context.get("rooms_list", [])[:6]
     hotel_name = context.get("selected_hotel", "Hotel")
-    check_in_str = context.get("check_in", "")
-    
-    # Helper function to parse date and find matching season
-    def get_seasonal_price(room: Dict, check_in_date: str) -> tuple:
-        """Returns (price, extra_price, season_name) based on check-in date."""
-        from datetime import datetime
-        
-        # Default prices from room
-        base_price = float(room.get("base_price", 0))
-        base_extra = float(room.get("extra_person_price", 0))
-        
-        if not check_in_date:
-            return base_price, base_extra, "Standard Rate"
-        
-        try:
-            # Parse check-in date
-            check_in = datetime.strptime(check_in_date, "%Y-%m-%d")
-            
-            # Get seasons list
-            seasons = room.get("seasons", [])
-            
-            for season in seasons:
-                start_date_str = season.get("starting_date", "")
-                end_date_str = season.get("end_date", "")
-                
-                if not start_date_str or not end_date_str:
-                    continue
-                
-                # Parse season dates (format: "01-04-2026")
-                try:
-                    season_start = datetime.strptime(start_date_str, "%d-%m-%Y")
-                    season_end = datetime.strptime(end_date_str, "%d-%m-%Y")
-                    
-                    # Check if check-in date falls within season
-                    if season_start <= check_in <= season_end:
-                        season_price = float(season.get("price", base_price))
-                        season_extra = float(season.get("extra_price", base_extra))
-                        season_name = season.get("season_name", "Seasonal Rate")
-                        return season_price, season_extra, season_name
-                except ValueError:
-                    continue
-                    
-            return base_price, base_extra, "Standard Rate"
-            
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Season price error: {e}")
-            return base_price, base_extra, "Standard Rate"
-    
-    responses = []
 
+    content  = _section_header(f"Rooms at {hotel_name}")
+
+    buttons = []
     for i, room in enumerate(rooms):
-        cat     = room.get("room_category", room.get("category", ""))
-        rtype   = room.get("room_type", room.get("type", ""))
+        cat     = room.get("category", "")
+        rtype   = room.get("type", "")
         min_cap = room.get("minimum_capacity", "?")
         max_cap = room.get("maximum_capacity", "?")
-        
-        # Get seasonal pricing based on check-in date
-        price, extra_price, season_name = get_seasonal_price(room, check_in_str)
-        
-        # Get room images
-        room_images = room.get("room_images", [])
-        if not room_images:
-            room_images = room.get("images", [])
-        if not room_images:
-            room_images = room.get("gallery", [])
-        
-        # Build room details text
-        caption = f" Room In  *({hotel_name}) Hotel*\n"
-        caption += f"*Room Category* {cat}\n"
-        caption += f"*Room Type* {rtype}\n"
-        caption += f"*Min Capacity* {min_cap} guests\n"
-        caption += f"*Max Capacity* {max_cap} guests\n"
-    
-        
-        caption += f"*Price:* Rs.{int(price):,}/night\n"
-        if extra_price and int(extra_price) > 0:
-            caption += f"*Extra Person:* Rs.{int(extra_price):,}/night\n"
-        
-        facilities = room.get("facilities", [])
-        if facilities:
-            facilities_str = ", ".join(facilities[:3])
-            if len(facilities) > 3:
-                facilities_str += f" +{len(facilities) - 3} more"
-            caption += f"\n*Room Facilities:*\n"
-            caption += f"{facilities_str}\n"
-        
-       
-        if room_images and len(room_images) > 0:
-            first_image = room_images[0]
-            if first_image and first_image.startswith(('http://', 'https://')):
-                responses.append({
-                    "type": "image",
-                    "content": first_image,
-                    "caption": caption,
-                    "buttons": [{"text": f"Select Room {i + 1}", "value": f"pick_room:{i}"}, {"text": "Other Hotels", "value": "other_hotels"}]
-                })
-                continue
-        
-       
-        text_content = f"*{hotel_name}*\n"
-        text_content += f"*Room {i + 1}: {cat} — {rtype}*\n\n"
-        text_content += f"*Capacity:* {min_cap}-{max_cap} guests\n"
-        if season_name != "Standard Rate":
-            text_content += f"*Season:* {season_name}\n"
-        text_content += f"*Price:* Rs.{int(price):,}/night\n"
-        if extra_price and int(extra_price) > 0:
-            text_content += f"*Extra Person:* Rs.{int(extra_price):,}/night\n"
-        if facilities:
-            facilities_str = ", ".join(facilities[:3])
-            if len(facilities) > 3:
-                facilities_str += f" +{len(facilities) - 3} more"
-            text_content += f"*Facilities:* {facilities_str}\n"
-        
-        responses.append({
-            "type": "buttons",
-            "content": text_content,
-            "buttons": [{"text": f"Select Room {i + 1}", "value": f"pick_room:{i}"}, {"text": "Other Hotels", "value": "other_hotels"}]
-        })
+        base    = room.get("base_price", 0)
+        extra   = room.get("extra_person_price", 0)
 
-    return {"type": "multi", "responses": responses}
+        content += f"*Room {i + 1}: {cat} — {rtype}*\n"
+        content += f"Capacity: {min_cap}-{max_cap} guests\n"
+        content += f"Base: Rs.{int(base):,}/night\n"
+        if extra and int(extra) > 0:
+            content += f"Extra person: Rs.{int(extra):,}/night\n"
+        content += "\n"
+
+        buttons.append({"text": f"Room {i + 1} — {cat}", "value": f"pick_room:{i}"})
+
+    buttons.append({"text": "Other Hotels", "value": "other_hotels"})
+    content += "Select a room to continue:"
+    return {"type": "buttons_grid", "content": content, "buttons": buttons}
 
 
 def card_hotel_summary(context: Dict) -> Dict:
-    """Final hotel booking summary card with full price breakdown."""
+    """Final hotel booking summary card."""
     price       = context.get("price_details", {})
     meal        = context.get("meal_details", {})
     room        = context.get("selected_room_data", {})
@@ -268,20 +155,10 @@ def card_hotel_summary(context: Dict) -> Dict:
 
     nights    = price.get("nights", 0)
     rooms_n   = price.get("rooms_needed", 1)
-   
-    extra_persons = price.get("extra_people", 0)
-    room_total = price.get("room_total", 0)
-    extra_total = price.get("extra_total", 0)
-     
-    base_price = price.get("price_per_night_per_room", 0)
-     
-    extra_price = price.get("extra_price_per_night", 0)
-    
     dest      = context.get("destination", "")
     check_in  = context.get("check_in", "")
     check_out = context.get("check_out", "")
     guests    = context.get("guests", "")
-    hotel_name = context.get("selected_hotel", "")
 
     content  = _section_header("Booking Summary")
     content += _row("Destination", dest)
@@ -291,23 +168,18 @@ def card_hotel_summary(context: Dict) -> Dict:
     content += "\n"
 
     content += _section_header("Hotel Details")
-    content += _row("Hotel", hotel_name)
-    content += _row("Room", f"{room.get('room_category', room.get('category', ''))} — {room.get('room_type', room.get('type', ''))}")
+    content += _row("Hotel", context.get("selected_hotel", ""))
+    content += _row("Room", f"{room.get('category', '')} — {room.get('type', '')}")
     content += _row("Rooms Booked", str(rooms_n))
-    if extra_persons > 0:
-        content += _row("Extra Persons", str(extra_persons))
     content += "\n"
 
     content += _section_header("Price Details")
-    content += _row(f"Room Cost ({rooms_n} rooms × {nights} nights)", f"Rs.{room_total:,.0f}")
-    if extra_persons > 0:
-        content += _row(f"Extra Person Cost ({extra_persons} persons × {nights} nights @ Rs.{int(extra_price):,}/night)", f"Rs.{extra_total:,.0f}")
-    content += _row("Meal Plan", meal.get("meal_name", "No meals"))
-    content += _row("Meal Cost", f"Rs.{meal.get('total_meal_price', 0):,.0f}")
+    content += _row("Room Cost",  f"Rs.{price.get('grand_total', 0):,.0f}")
+    content += _row("Meal Plan",  meal.get("meal_name", "No meals"))
+    content += _row("Meal Cost",  f"Rs.{meal.get('total_meal_price', 0):,.0f}")
     content += "\n"
     content += f"*GRAND TOTAL:  Rs.{grand_total:,.0f}*\n\n"
-    
-    content += "\nPlease confirm your booking"
+    content += "Please confirm your booking"
 
     return {
         "type": "buttons",
@@ -319,51 +191,33 @@ def card_hotel_summary(context: Dict) -> Dict:
         ],
     }
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PACKAGE FLOW CARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def card_pkg_packages(context: Dict) -> Dict:
-    """
-    Package listing - each package as its own card with image + package details + button.
-    Same design as hotel and room cards.
-    """
-    pkgs = context.get("packages_list", [])[:6]
+    """Available packages listing card."""
+    pkgs = context.get("packages_list", [])
     dest = context.get("destination", "")
-    responses = []
 
-    for i, pkg in enumerate(pkgs):
-        name = pkg.get("package_name") or pkg.get("title", "Package")
-        image_url = pkg.get("package_image", "")
-        locations = pkg.get("locations", [])
-        location_str = ", ".join(locations[:3]) if locations else dest
-        if len(locations) > 3:
-            location_str += f" +{len(locations) - 3} more"
-        itinerary = pkg.get("itinerary", [])
-        nights = len(itinerary)
-        caption = f"\n*{name}*\n"
-        caption += f"\n*Destinations:* {location_str}\n"
-        if nights > 0:
-            caption += f"\n*Duration:* {nights} Nights\n"
-        if image_url and image_url.startswith(('http://', 'https://')):
-            responses.append({
-                "type": "image",
-                "content": image_url,
-                "caption": caption,
-                "buttons": [{"text": "View Package", "value": f"select_package_{i}"}]
-            })
-        else:
-            text_content = f"*{i + 1}. {name}*\n\n"
-            text_content += f"*Destinations:* {location_str}\n"
-            if nights > 0:
-                text_content += f"*Duration:* {nights} Nights\n"
-            responses.append({
-                "type": "buttons",
-                "content": text_content,
-                "buttons": [{"text": "View Package", "value": f"select_package_{i}"}]
-            })
+    content  = _section_header(f"Packages for {dest}")
 
-    return {"type": "multi", "responses": responses}
+    buttons = []
+    for i, pkg in enumerate(pkgs[:6]):
+        name   = pkg.get("package_name") or pkg.get("title", "Package")
+        nights = len(pkg.get("itinerary", []))
+
+        content += f"*{i + 1}. {name}*\n"
+        if nights:
+            content += f"{nights} Nights\n"
+        content += "\n"
+
+        buttons.append({"text": f"Package {i + 1}", "value": f"select_package_{i}"})
+
+    content += "Select a package to view details:"
+    return {"type": "buttons_grid", "content": content, "buttons": buttons}
+
 
 def card_pkg_full_details(context: Dict) -> Dict:
     """
@@ -447,7 +301,7 @@ def card_pkg_full_details(context: Dict) -> Dict:
         content += _row("MAP Meal",    fp(map_total))
         content += "\n"
 
-     
+    # ── Cost Summary (mirrors Price Details block) ──
     content += _section_header("Cost Summary")
     content += _row("Hotel Subtotal", fp(total_hotel))
     content += _row("MAP Meal",       fp(total_map))
