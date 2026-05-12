@@ -20,9 +20,7 @@ ROOM_PRICES_API         = f"{BASE}/room-prices"
 VEHICLE_PRICES_API      = f"{BASE}/vehicle-prices"
 ACTIVITIES_PRICES_API   = f"{BASE}/activities-prices"
 
-print(f'ALL_HOTELS_API', ALL_HOTELS_API)
-
-
+ 
 def _get_display_phone(sender_phone_number_id: str) -> str:
     try:
         from database.database import get_whatsapp_config
@@ -54,6 +52,14 @@ class TravelTools:
         else:
             self.phone = ""
             logger.warning("TravelTools created without phone")
+
+        # Fix for Hostinger WAF blocking Python requests
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        })
         logger.info(f"TravelTools initialized with phone={self.phone}")
 
     def _phone_params(self) -> Dict:
@@ -65,7 +71,7 @@ class TravelTools:
 
     def get_categories(self) -> Dict[str, Any]:
         try:
-            response = requests.get(CATEGORIES_API, timeout=30)
+            response = self.session.get(CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data and data.get("status") and data.get("data"):
@@ -81,7 +87,7 @@ class TravelTools:
     def search_hotels_by_category(self, category: str, location: str = None) -> Dict[str, Any]:
         try:
             params = self._phone_params()
-            response = requests.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
+            response = self.session.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
 
@@ -127,7 +133,7 @@ class TravelTools:
     def get_hotel_rooms(self, hotel_name: str) -> Dict[str, Any]:
         try:
             params = self._phone_params()
-            response = requests.get(ALL_HOTELS_API, params=params, timeout=30)
+            response = self.session.get(ALL_HOTELS_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_hotels = data.get("hotels", [])
@@ -209,7 +215,7 @@ class TravelTools:
     def get_all_hotels_in_location(self, location: str) -> Dict[str, Any]:
         try:
             params = self._phone_params()
-            response = requests.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
+            response = self.session.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_hotels = []
@@ -232,7 +238,7 @@ class TravelTools:
     def get_packages(self, destination: str = None) -> Dict[str, Any]:
         try:
             params = self._phone_params()
-            response = requests.get(PACKAGES_API, params=params, timeout=30)
+            response = self.session.get(PACKAGES_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             all_packages = data if isinstance(data, list) else data.get("packages", data.get("data", []))
@@ -257,7 +263,7 @@ class TravelTools:
     def get_hotels_in_location_for_package(self, location: str, hotel_category: str = None) -> Dict[str, Any]:
         try:
             params = self._phone_params()
-            response = requests.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
+            response = self.session.get(HOTELS_BY_CATEGORY_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             matched = []
@@ -284,7 +290,7 @@ class TravelTools:
 
     def get_vehicle_categories(self) -> Dict[str, Any]:
         try:
-            response = requests.get(VEHICLE_CATEGORIES_API, timeout=30)
+            response = self.session.get(VEHICLE_CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("categories"):
@@ -297,7 +303,7 @@ class TravelTools:
     def get_vehicles_by_type(self, vehicle_type: str) -> Dict[str, Any]:
         try:
             params = {**self._phone_params(), "include": vehicle_type.lower()}
-            response = requests.get(VEHICLE_BY_TYPE_API, params=params, timeout=30)
+            response = self.session.get(VEHICLE_BY_TYPE_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             vehicles = []
@@ -321,7 +327,7 @@ class TravelTools:
 
     def get_room_categories(self) -> Dict[str, Any]:
         try:
-            response = requests.get(ROOM_CATEGORIES_API, timeout=30)
+            response = self.session.get(ROOM_CATEGORIES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("room_categories"):
@@ -336,7 +342,12 @@ class TravelTools:
     @staticmethod
     def get_room_prices() -> Dict[str, Any]:
         try:
-            response = requests.get(ROOM_PRICES_API, timeout=30)
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+            })
+            response = session.get(ROOM_PRICES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("prices"):
@@ -349,7 +360,12 @@ class TravelTools:
     @staticmethod
     def get_vehicle_prices() -> Dict[str, Any]:
         try:
-            response = requests.get(VEHICLE_PRICES_API, timeout=30)
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+            })
+            response = session.get(VEHICLE_PRICES_API, timeout=30)
             response.raise_for_status()
             data = response.json()
             if data.get("status") and data.get("prices"):
@@ -547,7 +563,12 @@ class TravelTools:
 
             activities_price_per_night = 0
             try:
-                act_response = requests.get(ACTIVITIES_PRICES_API, timeout=30)
+                act_session = requests.Session()
+                act_session.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                })
+                act_response = act_session.get(ACTIVITIES_PRICES_API, timeout=30)
                 if act_response.status_code == 200:
                     act_data = act_response.json()
                     if act_data.get("status"):

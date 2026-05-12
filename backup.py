@@ -312,8 +312,7 @@ def card_pkg_full_details(context: Dict) -> Dict:
     content += "\n"
     content += f"*TOTAL PACKAGE:  {fp(total_price)}*\n"
     content += "Meal Plan: MAP (Breakfast + Dinner included)\n\n"
-    content += "Please review and select an option:"
-
+    content += "Please review and select an option:
     return {
         "type": "buttons",
         "content": content,

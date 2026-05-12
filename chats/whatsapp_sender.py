@@ -244,7 +244,7 @@ def _send_buttons_in_batches(to: str, content: str, buttons: list, url: str, hea
     if res and res.status_code == 200:
         for batch in batches[1:]:
             time.sleep(0.4)
-            safe_post(url, headers, _button_message(to, "📋 More options:", batch))
+            safe_post(url, headers, _button_message(to, "📋 More options", batch))
         return res.json()
     else:
         # Fallback to plain text if buttons fail

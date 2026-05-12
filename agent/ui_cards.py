@@ -365,14 +365,8 @@ def card_pkg_packages(context: Dict) -> Dict:
 
     return {"type": "multi", "responses": responses}
 
-def card_pkg_full_details(context: Dict) -> Dict:
-    """
-    Full package details card.
-    Identical section format as card_hotel_summary:
-      PACKAGE SUMMARY / ITINERARY / PRICE BREAKDOWN / COST SUMMARY
-    """
-    pkg            = context.get("selected_package", {})
-    itinerary      = pkg.get("itinerary", [])
+def card_pkg_summary(context: Dict) -> Dict:
+    """Package summary - same UI format as hotel summary, with itinerary"""
     pd             = context.get("pkg_price_details", {})
     nights         = pd.get("nights", 0)
     total_price    = pd.get("total_price", 0)
@@ -382,83 +376,54 @@ def card_pkg_full_details(context: Dict) -> Dict:
     vehicle_name   = pd.get("vehicle_name", "None")
     package_margin = pd.get("package_margin", 0)
     guests         = pd.get("guests", 1)
-    hotel_costs    = pd.get("hotel_costs", [])
     selected_hotels= pd.get("selected_hotels", {})
 
-    pkg_name  = pkg.get("package_name") or pkg.get("title", "Package")
-    check_in  = context.get("check_in", "")
-    check_out = context.get("check_out", "")
-    dest      = context.get("destination", "")
+    pkg      = context.get("selected_package", {})
+    itinerary= pkg.get("itinerary", [])
+    pkg_name = pkg.get("package_name") or pkg.get("title", "Package")
+    check_in = context.get("check_in", "")
+    check_out= context.get("check_out", "")
+    dest     = context.get("destination", "")
 
-    veh_str = vehicle_name
-    if vehicle_price > 0:
-        veh_str += f"  ({fp(vehicle_price)} flat)"
-
-    # ── Package Summary (mirrors hotel summary top block) ──
-    content  = _section_header("Package Summary")
+   
+    content  = _section_header("Booking Summary")
     content += _row("Package",     pkg_name)
     content += _row("Destination", dest)
     content += _row("Dates",       f"{check_in}  to  {check_out}")
     content += _row("Nights",      str(nights))
     content += _row("Guests",      str(guests))
-    content += _row("Hotel Cat.",  context.get("hotel_category", ""))
-    content += _row("Room Cat.",   context.get("room_category", ""))
-    content += _row("Vehicle",     veh_str)
     content += "\n"
 
-    # ── Itinerary (mirrors Hotel Details block) ──
+     
+    content += _section_header("Package Details")
+    content += _row("Hotel Cat.", context.get("hotel_category", ""))
+    content += _row("Room Cat.",  context.get("room_category", ""))
+    content += _row("Vehicle",    vehicle_name if vehicle_price > 0 else "None")
+    content += "\n"
+
+    
     content += _section_header("Itinerary")
     for i, day in enumerate(itinerary[:nights], 1):
         title      = day.get("title", f"Day {i}")
         loc        = day.get("stay_location") or day.get("location", dest)
         hotel_name = selected_hotels.get(loc, context.get("hotel_category", "Hotel"))
-
-        content += f"*Day {i}:* {title}\n"
-        content += f"Location: {loc}\n"
-        content += f"Hotel: {hotel_name}\n"
-        content += f"Vehicle: {vehicle_name}\n"
+        content += _row(f"Day {i}", title)
+        content += _row("Location", loc)
+        content += _row("Hotel",    hotel_name)
+        content += _row("Vehicle",  vehicle_name)
         content += "\n"
 
-    # ── Price Breakdown per location ──
-    content += _section_header("Price Breakdown")
-    for cost in hotel_costs:
-        loc        = cost.get("location", "")
-        h_name     = cost.get("hotel_name", "")
-        room_cat   = cost.get("room_category", "")
-        season     = cost.get("season_name", "Regular Rate")
-        rooms_n    = cost.get("rooms_needed", 0)
-        min_c      = cost.get("min_capacity", 2)
-        max_c      = cost.get("max_capacity", 3)
-        price_room = cost.get("price_per_room", 0)
-        extra_p    = cost.get("extra_persons_total", 0)
-        extra_pr   = cost.get("extra_person_price", 0)
-        h_total    = cost.get("hotel_total", 0)
-        map_total  = cost.get("map_total", 0)
-
-        content += f"*Hotel at {loc}*\n"
-        content += _row("Name",   h_name)
-        content += _row("Room",   room_cat)
-        content += _row("Season", season)
-        content += _row("Rooms",  f"{rooms_n}  (cap: {min_c}-{max_c} guests)")
-        content += _row("Rate",   f"{fp(price_room)}/night")
-        if extra_p > 0:
-            content += _row("Extra", f"{extra_p} pax @ {fp(extra_pr)}/night")
-        content += _row("Hotel Total", fp(h_total))
-        content += _row("MAP Meal",    fp(map_total))
-        content += "\n"
-
-     
-    content += _section_header("Cost Summary")
-    content += _row("Hotel Subtotal", fp(total_hotel))
-    content += _row("MAP Meal",       fp(total_map))
+    
+    content += _section_header("Price Details")
+    content += _row(f"Hotel Cost ({nights} nights)", fp(total_hotel))
+    content += _row("MAP Meal (Breakfast + Dinner)",  fp(total_map))
     if vehicle_price > 0:
-        content += _row("Vehicle", fp(vehicle_price))
+        content += _row("Vehicle Cost", fp(vehicle_price))
     if package_margin > 0:
-        content += _row("Margin",  fp(package_margin))
+        content += _row("Service Charge", fp(package_margin))
     content += "\n"
-    content += f"*TOTAL PACKAGE:  {fp(total_price)}*\n"
-    content += "Meal Plan: MAP (Breakfast + Dinner included)\n\n"
-    content += "Please review and select an option:"
+    content += f"*GRAND TOTAL:  {fp(total_price)}*\n\n"
+    content += "\nPlease confirm your booking"
 
     return {
         "type": "buttons",
@@ -471,45 +436,97 @@ def card_pkg_full_details(context: Dict) -> Dict:
         ],
     }
 
-
-def card_pkg_final_summary(context: Dict) -> Dict:
+def card_vehicles_list(context: Dict) -> Dict:
     """
-    Final package confirmation card.
-    Same section format as card_hotel_summary.
+    Vehicle listing - EXACT same pattern as card_hotel_rooms
+    Shows seasonal pricing based on user's check-in date.
     """
-    pd          = context.get("pkg_price_details", {})
-    total_price = pd.get("total_price", 0)
-    pkg_name    = context.get("selected_package", {}).get("package_name", "Package")
-    vehicle     = context.get("vehicle", {})
-    check_in    = context.get("check_in", "")
-    check_out   = context.get("check_out", "")
+    vehicles = context.get("vehicles_list", [])
+    vehicle_category = context.get("vehicle_category", "Vehicle")
+    check_in_str = context.get("check_in", "")
+    
+     
+    def get_vehicle_seasonal_price(vehicle: Dict, check_in_date: str) -> tuple:
+        """Returns (price, season_name) based on check-in date - same as hotel rooms"""
+        from datetime import datetime
+        
+        
+        base_price = float(str(vehicle.get("price", "0")).replace(",", ""))
+        
+        if not check_in_date:
+            return base_price, "Standard Rate"
+        
+        try:
+            
+            check_in = datetime.strptime(check_in_date, "%Y-%m-%d")
+            
+            
+            seasons = vehicle.get("seasons", [])
+            
+            for season in seasons:
+                start_date_str = season.get("starting_date", "")
+                end_date_str = season.get("end_date", "")
+                
+                if not start_date_str or not end_date_str:
+                    continue
+                
+                
+                try:
+                    season_start = datetime.strptime(start_date_str, "%d-%m-%Y")
+                    season_end = datetime.strptime(end_date_str, "%d-%m-%Y")
+                    
+                 
+                    if season_start <= check_in <= season_end:
+                        season_price = float(str(season.get("price", base_price)).replace(",", ""))
+                        season_name = season.get("season_name", "Seasonal Rate")
+                        return season_price, season_name
+                except ValueError:
+                    continue
+                    
+            return base_price, "Standard Rate"
+            
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Vehicle season price error: {e}")
+            return base_price, "Standard Rate"
+    
+    responses = []
 
-    content  = _section_header("Booking Summary")
-    content += _row("Package",     pkg_name)
-    content += _row("Destination", context.get("destination", ""))
-    content += _row("Dates",       f"{check_in}  to  {check_out}")
-    content += _row("Guests",      str(context.get("guests", "")))
-    content += "\n"
+    for i, vehicle in enumerate(vehicles):
+        name = vehicle.get("name", "Vehicle")
+        capacity = vehicle.get("seater_capacity", "")
+        image_url = vehicle.get("image", "")
+        
+      
+        price, season_name = get_vehicle_seasonal_price(vehicle, check_in_str)
+        
+       
+        caption = f"*{vehicle_category} Vehicle*\n"
+        caption += f"*{name}*\n"
+        caption += f"*Capacity:* {capacity} seater\n"
+        caption += f"*Price:* Rs.{int(price):,}/trip\n"
+        
+       
+        if season_name != "Standard Rate":
+            caption += f"*Season:* {season_name}\n"
+        
+        if image_url and image_url.startswith(('http://', 'https://')):
+            responses.append({
+                "type": "image",
+                "content": image_url,
+                "caption": caption,
+                "buttons": [{"text": f"Select Vehicle", "value": f"select_vehicle_{i}"}]
+            })
+        else:
+            text_content = f"*{i + 1}. {name}*\n"
+            text_content += f"*Capacity:* {capacity} seater\n"
+            text_content += f"*Price:* Rs.{int(price):,}/trip\n"
+            if season_name != "Standard Rate":
+                text_content += f"*Season:* {season_name}\n"
+            responses.append({
+                "type": "buttons",
+                "content": text_content,
+                "buttons": [{"text": f"Select Vehicle", "value": f"select_vehicle_{i}"}]
+            })
 
-    content += _section_header("Package Details")
-    content += _row("Hotel Cat.", context.get("hotel_category", ""))
-    content += _row("Room Cat.",  context.get("room_category", ""))
-    content += _row("Vehicle",    vehicle.get("name", "None"))
-    content += "\n"
-
-    content += _section_header("Price Details")
-    content += _row("Meal Plan", "MAP (Breakfast + Dinner)")
-    content += "\n"
-    content += f"*TOTAL PACKAGE:  {fp(total_price)}*\n\n"
-    content += "Please confirm your booking"
-
-    return {
-        "type": "buttons",
-        "content": content,
-        "buttons": [
-            {"text": "Confirm Booking", "value": "pkg_confirm_package"},
-            {"text": "Change Vehicle",  "value": "pkg_change_vehicle"},
-            {"text": "Change Hotel",    "value": "pkg_change_hotel"},
-            {"text": "Other Packages",  "value": "pkg_other_packages"},
-        ],
-    }
+    return {"type": "multi", "responses": responses}

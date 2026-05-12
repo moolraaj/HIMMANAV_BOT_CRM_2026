@@ -18,8 +18,7 @@ from agent.ui_cards import (
     card_hotel_rooms,
     card_hotel_summary,
     card_pkg_packages,
-    card_pkg_full_details,
-    card_pkg_final_summary,
+    card_pkg_summary,
     fp,
 )
 
@@ -447,24 +446,34 @@ class AIHotelAgent:
         try:
             result = tools.get_vehicles_by_type(slug)
             if not result.get("success") or not result.get("vehicles"):
-                return {"type": "text", "content": f"No vehicles available in {slug} category. Please select another type."}
-            vehicles = result.get("vehicles", [])
-
-            content  = f"*{slug.upper()} VEHICLES*\n\n"
-             
-
-            buttons = []
-            for i, v in enumerate(vehicles):
-                name     = v.get("name", "Vehicle")
-                capacity = v.get("capacity", "N/A")
-                buttons.append({"text": name, "value": f"select_vehicle_{i}"})
-
-            context["vehicles_list"] = vehicles
+               
+                context["vehicle_category"] = None
+                context["vehicle_slug"] = None
+                self._save(state, context)
+                
+                 
+                vehicle_cats = context.get("vehicle_types") or []
+                if vehicle_cats:
+                    buttons = [{"text": vt["name"], "value": vt["name"]} for vt in vehicle_cats]
+                    return {
+                        "type": "buttons_grid",
+                        "content": (
+                            f"⚠️ *No vehicles available in {slug} category.*\n\n"
+                            f"*SELECT VEHICLE TYPE*\n\n"
+                            f"Please choose another vehicle type:"
+                        ),
+                        "buttons": buttons,
+                    }
+                return self._pkg_fetch_vehicle_categories(context, tools, state)
+            
+           
+            context["vehicles_list"] = result.get("vehicles", [])
             context["step"] = "pkg_ask_vehicle"
             self._save(state, context)
-            content += "Select your vehicle"
-            return {"type": "buttons_grid", "content": content, "buttons": buttons}
-
+            
+            from agent.ui_cards import card_vehicles_list
+            return card_vehicles_list(context)
+            
         except Exception as e:
             logger.error(f"Vehicle fetch error: {e}")
             return {"type": "text", "content": f"Error loading vehicles: {str(e)}"}
@@ -488,9 +497,7 @@ class AIHotelAgent:
     def _pkg_show_packages(self, context: Dict) -> Dict:
         return card_pkg_packages(context)
 
-    # ─────────────────────────────────────────────────────────────
-    # PACKAGE FLOW — PRICE CALCULATION
-    # ─────────────────────────────────────────────────────────────
+    
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         if not date_str:
@@ -677,10 +684,10 @@ class AIHotelAgent:
             return {"type": "text", "content": f"Error calculating price: {str(e)}"}
 
     def _pkg_show_full_details(self, context: Dict) -> Dict:
-        return card_pkg_full_details(context)
+        return card_pkg_summary(context)
 
     def _pkg_show_final_summary(self, context: Dict) -> Dict:
-        return card_pkg_final_summary(context)
+        return card_pkg_summary(context)
 
     # ─────────────────────────────────────────────────────────────
     # PACKAGE FLOW — CONFIRM BOOKING
