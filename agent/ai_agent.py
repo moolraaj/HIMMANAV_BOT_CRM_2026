@@ -1457,5 +1457,4 @@ class AIHotelAgent:
         if missing:
             return self._ask_for_field(missing, context)
 
-        # ── Final fallback ────────────────────────────────────────
         return self._welcome_message()
