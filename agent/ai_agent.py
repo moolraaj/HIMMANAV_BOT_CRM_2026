@@ -181,6 +181,68 @@ class AIHotelAgent:
         if state is not None:
             state["data"] = context
 
+
+    def _generate_and_send_pdf(self, context: Dict, phone: str, business_phone: str, state: dict) -> Dict:
+        """
+        Generate PDF for the package and send it to the user via WhatsApp.
+        Returns appropriate response message.
+        """
+        import os
+        from datetime import datetime
+        from services.pdf_generator import generate_package_pdf, send_pdf_via_whatsapp
+        from database.database import get_whatsapp_config
+        
+        pkg = context.get("selected_package", {})
+        if not pkg:
+            return {"type": "text", "content": "No package selected. Please select a package first."}
+        
+        # Create unique filename
+        pkg_name = pkg.get("package_name") or pkg.get("title", "package")
+        safe_name = "".join(c for c in pkg_name[:30] if c.isalnum() or c in (" ", "-", "_")).rstrip()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = f"generated_pdfs/{safe_name}_{timestamp}.pdf"
+        
+        try:
+            # Generate PDF
+            generate_package_pdf(
+                package_data=pkg,
+                context=context,
+                output_path=pdf_path,
+            )
+            
+            
+            sender_config = get_whatsapp_config(business_phone)
+            sender_phone_number_id = sender_config.get("phone_number_id") if sender_config else None
+            
+            
+            caption = f"📄 *{pkg_name}* - Travel Package Details\n\n✅ *PDF Generated Successfully!*"
+            result = send_pdf_via_whatsapp(
+                to_phone=phone,
+                pdf_path=pdf_path,
+                caption=caption,
+                sender_phone_number_id=sender_phone_number_id,
+            )
+            
+            if result:
+                return {
+                    "type": "buttons",
+                    "buttons": [
+                        {"text": "BOOK NOW", "value": "pkg_book_now"},
+                    ],
+                }
+            else:
+                return {
+                    "type": "text",
+                    "content": "⚠️ *PDF Generation Failed*\n\nUnable to send the PDF. Please try again or click BOOK NOW to proceed."
+                }
+                
+        except Exception as e:
+            logger.error(f"PDF generation error: {e}")
+            return {
+                "type": "text",
+                "content": f"❌ *Error generating PDF:* {str(e)}\n\nPlease try again or contact support."
+            }
+
     # ─────────────────────────────────────────────────────────────
     # INTENT + CITY VALIDATION  (shared)
     # ─────────────────────────────────────────────────────────────
@@ -913,6 +975,8 @@ class AIHotelAgent:
         # ════════════════════════════════════════════════════════
 
         if svc == "package":
+            if msg == "pkg_generate_pdf":
+                return self._generate_and_send_pdf(context, phone, business_phone, state)
 
             # Hotel category selection
             hotel_cats = [c.get("name", "").lower() for c in (context.get("hotel_categories") or [])]

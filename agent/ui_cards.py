@@ -366,7 +366,7 @@ def card_pkg_packages(context: Dict) -> Dict:
     return {"type": "multi", "responses": responses}
 
 def card_pkg_summary(context: Dict) -> Dict:
-    """Package summary - same UI format as hotel summary, with itinerary"""
+    """Package summary — itinerary + summary in ONE card with buttons (max 3 per card)."""
     pd             = context.get("pkg_price_details", {})
     nights         = pd.get("nights", 0)
     total_price    = pd.get("total_price", 0)
@@ -378,14 +378,14 @@ def card_pkg_summary(context: Dict) -> Dict:
     guests         = pd.get("guests", 1)
     selected_hotels= pd.get("selected_hotels", {})
 
-    pkg      = context.get("selected_package", {})
-    itinerary= pkg.get("itinerary", [])
-    pkg_name = pkg.get("package_name") or pkg.get("title", "Package")
-    check_in = context.get("check_in", "")
-    check_out= context.get("check_out", "")
-    dest     = context.get("destination", "")
+    pkg       = context.get("selected_package", {})
+    pkg_name  = pkg.get("package_name") or pkg.get("title", "Package")
+    itinerary = pkg.get("itinerary", [])
+    check_in  = context.get("check_in", "")
+    check_out = context.get("check_out", "")
+    dest      = context.get("destination", "")
 
-   
+    # ── Booking Summary ───────────────────────────────────────────
     content  = _section_header("Booking Summary")
     content += _row("Package",     pkg_name)
     content += _row("Destination", dest)
@@ -394,26 +394,26 @@ def card_pkg_summary(context: Dict) -> Dict:
     content += _row("Guests",      str(guests))
     content += "\n"
 
-     
+    # ── Package Details ───────────────────────────────────────────
     content += _section_header("Package Details")
     content += _row("Hotel Cat.", context.get("hotel_category", ""))
     content += _row("Room Cat.",  context.get("room_category", ""))
     content += _row("Vehicle",    vehicle_name if vehicle_price > 0 else "None")
     content += "\n"
 
-    
+    # ── Itinerary (inline, no separate card) ──────────────────────
     content += _section_header("Itinerary")
     for i, day in enumerate(itinerary[:nights], 1):
         title      = day.get("title", f"Day {i}")
         loc        = day.get("stay_location") or day.get("location", dest)
         hotel_name = selected_hotels.get(loc, context.get("hotel_category", "Hotel"))
-        content += _row(f"Day {i}", title)
-        content += _row("Location", loc)
-        content += _row("Hotel",    hotel_name)
-        content += _row("Vehicle",  vehicle_name)
+        content += f"*Day {i}:* {title}\n"
+        content += f"*Location:* {loc}\n"
+        content += f"*Hotel:* {hotel_name}\n"
+        content += f"*Vehicle:* {vehicle_name}\n"
         content += "\n"
 
-    
+    # ── Price Details ─────────────────────────────────────────────
     content += _section_header("Price Details")
     content += _row(f"Hotel Cost ({nights} nights)", fp(total_hotel))
     content += _row("MAP Meal (Breakfast + Dinner)",  fp(total_map))
@@ -423,18 +423,33 @@ def card_pkg_summary(context: Dict) -> Dict:
         content += _row("Service Charge", fp(package_margin))
     content += "\n"
     content += f"*GRAND TOTAL:  {fp(total_price)}*\n\n"
-    content += "\nPlease confirm your booking"
 
-    return {
-        "type": "buttons",
+    card_summary = {
+        "type": "text",
         "content": content,
+    }
+
+    
+    card_actions = {
+        "type": "buttons",
+        "content": "Please confirm your booking",
         "buttons": [
-            {"text": "BOOK NOW",       "value": "pkg_book_now"},
-            {"text": "Change Vehicle", "value": "pkg_change_vehicle"},
-            {"text": "Change Hotel",   "value": "pkg_change_hotel"},
-            {"text": "Other Packages", "value": "pkg_other_packages"},
+            {"text": "BOOK NOW",     "value": "pkg_book_now"},
+            {"text": "Change Vehicle",  "value": "pkg_change_vehicle"},
         ],
     }
+
+   
+    card_options = {
+        "type": "buttons",
+        "content": "More options",
+        "buttons": [
+            {"text": "📄 Generate PDF", "value": "pkg_generate_pdf"},
+            {"text": "Other Packages",  "value": "pkg_other_packages"},
+        ],
+    }
+
+    return {"type": "multi", "responses": [card_summary, card_actions, card_options]}
 
 def card_vehicles_list(context: Dict) -> Dict:
     """
