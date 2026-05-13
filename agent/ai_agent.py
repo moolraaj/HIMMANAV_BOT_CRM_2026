@@ -6,7 +6,7 @@ import math
 import re
 import copy
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from openai import OpenAI
 from agent.tools import TravelTools, TOOL_DEFINITIONS
 
@@ -54,7 +54,8 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 Rules:
 - Today is {today}. Convert relative dates like "14 may", "this friday", "next week", "12 to 16 june", "after 10 days" to YYYY-MM-DD.
-- If month not specified, assume current year. If date has passed, assume next year.
+- If month not specified, assume current year current month. If date has passed, assume next month.
+- IMPORTANT: A single date like "12 june" or "june 12" or "12" → set ONLY check_in, leave check_out null.
 - "14 to 20 may" → check_in: this year's May 14, check_out: this year's May 20
 - "10 people" or "10 guests" or "for 10" or "party of 10" → guests: 10
 - A bare integer like "4" or "just 4" or "only 3" almost certainly means the number of guests → set guests to that integer.
@@ -67,6 +68,30 @@ Rules:
 - Return null for anything not mentioned — do NOT guess.
 
 User message: "{message}"
+"""
+
+# ── Package-specific date extraction prompt ──────────────────────────────────
+PKG_DATE_EXTRACTION_PROMPT = """You are a travel date extractor. Today is {today}.
+
+The user wants to provide a STARTING DATE for a travel package.
+
+Extract the starting date from: "{message}"
+
+Rules:
+- A bare number like "12" means day 12 of the current month ({current_month_name}).
+- "12 june" or "june 12" → June 12 of current year {current_year}.
+- "tomorrow" → {tomorrow}.
+- "after 4 days" → {after_4_days}.
+- "next week" → {next_week}.
+- If a date resolves to today or past → it is INVALID.
+- If no clear date found → null.
+
+Return ONLY valid JSON:
+{{
+  "start_date": "YYYY-MM-DD" | null,
+  "is_past": true | false,
+  "error": "reason if invalid" | null
+}}
 """
 
 CITY_VALIDATION_PROMPT = """The user is trying to book travel and typed: "{city}"
@@ -114,7 +139,7 @@ class AIHotelAgent:
     Flow is determined by context["service_type"]:
       - None      → welcome / service selection
       - "hotel"   → hotel booking sub-flow
-      - "package" → package booking sub-flow
+      - "package" → package booking sub-flow (asks ONLY start date, derives end from itinerary)
     """
 
     def __init__(self):
@@ -175,46 +200,37 @@ class AIHotelAgent:
             "hotel_data_cache": {},
             "selected_hotels": {},
             "date_error": None,
+            # ── package date collection step ──
+            "pkg_awaiting_start_date": False,
         }
 
     def _save(self, state, context):
         if state is not None:
             state["data"] = context
 
-
     def _generate_and_send_pdf(self, context: Dict, phone: str, business_phone: str, state: dict) -> Dict:
-        """
-        Generate PDF for the package and send it to the user via WhatsApp.
-        Returns appropriate response message.
-        """
         import os
         from datetime import datetime
         from services.pdf_generator import generate_package_pdf, send_pdf_via_whatsapp
         from database.database import get_whatsapp_config
-        
+
         pkg = context.get("selected_package", {})
         if not pkg:
             return {"type": "text", "content": "No package selected. Please select a package first."}
-        
-        # Create unique filename
+
         pkg_name = pkg.get("package_name") or pkg.get("title", "package")
         safe_name = "".join(c for c in pkg_name[:30] if c.isalnum() or c in (" ", "-", "_")).rstrip()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         pdf_path = f"generated_pdfs/{safe_name}_{timestamp}.pdf"
-        
+
         try:
-            # Generate PDF
             generate_package_pdf(
                 package_data=pkg,
                 context=context,
                 output_path=pdf_path,
             )
-            
-            
             sender_config = get_whatsapp_config(business_phone)
             sender_phone_number_id = sender_config.get("phone_number_id") if sender_config else None
-            
-            
             caption = f"📄 *{pkg_name}* - Travel Package Details\n\n✅ *PDF Generated Successfully!*"
             result = send_pdf_via_whatsapp(
                 to_phone=phone,
@@ -222,7 +238,6 @@ class AIHotelAgent:
                 caption=caption,
                 sender_phone_number_id=sender_phone_number_id,
             )
-            
             if result:
                 return {
                     "type": "buttons",
@@ -235,7 +250,6 @@ class AIHotelAgent:
                     "type": "text",
                     "content": "⚠️ *PDF Generation Failed*\n\nUnable to send the PDF. Please try again or click BOOK NOW to proceed."
                 }
-                
         except Exception as e:
             logger.error(f"PDF generation error: {e}")
             return {
@@ -270,6 +284,56 @@ class AIHotelAgent:
                 "confirm_booking": False, "possible_city": None,
             }
 
+    def _extract_pkg_start_date(self, message: str) -> Dict:
+        """
+        Extract ONLY a starting date for package flow.
+        Returns {"start_date": "YYYY-MM-DD" | None, "is_past": bool, "error": str | None}
+        """
+        today = datetime.now()
+        tomorrow = today + timedelta(days=1)
+        after_4 = today + timedelta(days=4)
+        next_week = today + timedelta(days=7)
+
+        import calendar
+        month_name = today.strftime("%B")
+
+        prompt = PKG_DATE_EXTRACTION_PROMPT.format(
+            today=today.strftime("%Y-%m-%d"),
+            current_month_name=month_name,
+            current_year=today.year,
+            tomorrow=tomorrow.strftime("%Y-%m-%d"),
+            after_4_days=after_4.strftime("%Y-%m-%d"),
+            next_week=next_week.strftime("%Y-%m-%d"),
+            message=message,
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                max_tokens=100,
+            )
+            result = json.loads(resp.choices[0].message.content)
+            logger.info(f"📅 Pkg start date extraction: {result}")
+
+            # Double-check: if start_date is today or past → reject
+            if result.get("start_date"):
+                try:
+                    sd = datetime.strptime(result["start_date"], "%Y-%m-%d").date()
+                    if sd <= today.date():
+                        return {
+                            "start_date": None,
+                            "is_past": True,
+                            "error": f"*{result['start_date']}* is today or in the past. Please provide a future date."
+                        }
+                except ValueError:
+                    pass
+            return result
+        except Exception as e:
+            logger.error(f"Pkg date extraction error: {e}")
+            return {"start_date": None, "is_past": False, "error": None}
+
     def _validate_city(self, city: str) -> Dict:
         try:
             resp = self.client.chat.completions.create(
@@ -299,6 +363,40 @@ class AIHotelAgent:
             return {"valid": False, "error": "Invalid date format."}
 
     # ─────────────────────────────────────────────────────────────
+    # PACKAGE — DERIVE CHECK-OUT FROM ITINERARY + START DATE
+    # ─────────────────────────────────────────────────────────────
+
+    def _derive_pkg_checkout(self, start_date_str: str, itinerary: List[Dict]) -> str:
+        """
+        Count unique overnight stay days from itinerary (ignore Day 0 travel day
+        and last day if it's just a return with no new stay).
+        Returns check_out as YYYY-MM-DD = start_date + nights.
+        """
+        try:
+            start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+
+            # Count days that have a stay_location (actual hotel nights)
+            # Typical pattern: Day 0 = travel, Day 1..N = stay, Day N+1 = return
+            # We count total itinerary items - 1 (last day is usually departure/return)
+            total_days = len(itinerary)
+
+            # nights = total_days - 1 (last item is usually return day with no new hotel)
+            # but if all days have stay_location, use total_days - 1 as nights
+            nights = max(total_days - 1, 1)
+
+            check_out_dt = start_dt + timedelta(days=nights)
+            logger.info(f"📅 Package: start={start_date_str}, itinerary_days={total_days}, nights={nights}, checkout={check_out_dt.strftime('%Y-%m-%d')}")
+            return check_out_dt.strftime("%Y-%m-%d")
+        except Exception as e:
+            logger.error(f"Derive checkout error: {e}")
+            # Fallback: start + 3 nights
+            try:
+                start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+                return (start_dt + timedelta(days=3)).strftime("%Y-%m-%d")
+            except Exception:
+                return start_date_str
+
+    # ─────────────────────────────────────────────────────────────
     # GUEST PARSE HELPER  (shared)
     # ─────────────────────────────────────────────────────────────
 
@@ -325,13 +423,22 @@ class AIHotelAgent:
     # ─────────────────────────────────────────────────────────────
 
     def _get_missing_field(self, context: Dict) -> Optional[str]:
-        """Works for both flows — returns the first missing required field."""
+        """
+        For hotel: service_type → destination → dates (both) → guests
+        For package: service_type → destination → check_in (start date only) → guests
+        """
         if not context.get("service_type"):
             return "service_type"
         if not context.get("destination"):
             return "destination"
-        if not context.get("check_in") or not context.get("check_out"):
-            return "dates"
+        svc = context.get("service_type")
+        if svc == "package":
+            # Package only needs start date; check_out is auto-derived later
+            if not context.get("check_in"):
+                return "dates"
+        else:
+            if not context.get("check_in") or not context.get("check_out"):
+                return "dates"
         if not context.get("guests"):
             return "guests"
         return None
@@ -347,9 +454,14 @@ class AIHotelAgent:
         if field == "dates":
             dest = context.get("destination", "")
             if svc == "package":
+                # Ask ONLY starting date for package
                 return {
                     "type": "text",
-                    "content": f"What are your travel dates for {dest}?"
+                    "content": (
+                        f"📅 *When would you like to start your trip to {dest}?*\n\n"
+                        "Please share your *starting date*.\n"
+                        "Examples: _15 June_ · _20_ · _tomorrow_ · _after 5 days_"
+                    )
                 }
             return {
                 "type": "text",
@@ -360,7 +472,7 @@ class AIHotelAgent:
         return {"type": "text", "content": "How can I help with your booking?"}
 
     # ─────────────────────────────────────────────────────────────
-    # WELCOME MESSAGE  — delegates to ui_cards
+    # WELCOME MESSAGE
     # ─────────────────────────────────────────────────────────────
 
     def _welcome_message(self) -> Dict:
@@ -400,7 +512,7 @@ class AIHotelAgent:
             return {"success": False, "error": str(e)}
 
     # ─────────────────────────────────────────────────────────────
-    # HOTEL FLOW — RESPONSE FORMATTERS  (delegates to ui_cards)
+    # HOTEL FLOW — RESPONSE FORMATTERS
     # ─────────────────────────────────────────────────────────────
 
     def _format_categories_response(self, context: Dict, error_category: str = None) -> Dict:
@@ -508,12 +620,9 @@ class AIHotelAgent:
         try:
             result = tools.get_vehicles_by_type(slug)
             if not result.get("success") or not result.get("vehicles"):
-               
                 context["vehicle_category"] = None
                 context["vehicle_slug"] = None
                 self._save(state, context)
-                
-                 
                 vehicle_cats = context.get("vehicle_types") or []
                 if vehicle_cats:
                     buttons = [{"text": vt["name"], "value": vt["name"]} for vt in vehicle_cats]
@@ -527,15 +636,14 @@ class AIHotelAgent:
                         "buttons": buttons,
                     }
                 return self._pkg_fetch_vehicle_categories(context, tools, state)
-            
-           
+
             context["vehicles_list"] = result.get("vehicles", [])
             context["step"] = "pkg_ask_vehicle"
             self._save(state, context)
-            
+
             from agent.ui_cards import card_vehicles_list
             return card_vehicles_list(context)
-            
+
         except Exception as e:
             logger.error(f"Vehicle fetch error: {e}")
             return {"type": "text", "content": f"Error loading vehicles: {str(e)}"}
@@ -558,8 +666,6 @@ class AIHotelAgent:
 
     def _pkg_show_packages(self, context: Dict) -> Dict:
         return card_pkg_packages(context)
-
-    
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         if not date_str:
@@ -612,8 +718,8 @@ class AIHotelAgent:
         return base_price, base_extra, "Regular Rate"
 
     def _calculate_rooms_and_extra(self, guests: int, min_cap: int, max_cap: int) -> Dict:
-        rooms_needed   = math.ceil(guests / max_cap)
-        extra_persons  = max(0, guests - (rooms_needed * min_cap))
+        rooms_needed  = math.ceil(guests / max_cap)
+        extra_persons = max(0, guests - (rooms_needed * min_cap))
         return {"rooms_needed": rooms_needed, "extra_persons_total": extra_persons}
 
     def _get_hotel_for_location(self, location: str, hotel_category: str, room_category: str, tools: TravelTools) -> Optional[Dict]:
@@ -638,21 +744,44 @@ class AIHotelAgent:
             logger.error(f"Hotel for location error: {e}")
             return None
 
+    # ─────────────────────────────────────────────────────────────
+    # PACKAGE PRICE CALCULATION  (season-aware, start-date-based)
+    # ─────────────────────────────────────────────────────────────
+
     def _pkg_calculate_and_show_price(self, context: Dict, tools: TravelTools, state: dict) -> Dict:
+        """
+        Package pricing:
+        1. check_in  = user-provided start date
+        2. check_out = start_date + itinerary_nights  (auto-derived)
+        3. For each unique stay_location in itinerary:
+             → fetch hotel for that location + hotel_category
+             → find matching room for room_category
+             → match room's seasons[] against check_in date
+             → use seasonal price if matched, else base_price
+        4. Sum hotel costs + MAP meal + vehicle + package_margin
+        """
         try:
             pkg           = context.get("selected_package", {})
             itinerary     = pkg.get("itinerary", [])
             check_in_str  = context.get("check_in")
-            check_out_str = context.get("check_out")
             guests        = context.get("guests", 1)
-            hotel_category= context.get("hotel_category")
-            room_category = context.get("room_category")
-            vehicle       = context.get("vehicle", {})
+            hotel_category = context.get("hotel_category")
+            room_category  = context.get("room_category")
+            vehicle        = context.get("vehicle", {})
+
+            if not check_in_str:
+                return {"type": "text", "content": "⚠️ Start date missing. Please provide your travel start date."}
+
+            # ── Auto-derive check_out from itinerary ──────────────
+            check_out_str = self._derive_pkg_checkout(check_in_str, itinerary)
+            context["check_out"] = check_out_str
+            logger.info(f"📦 Package dates: {check_in_str} → {check_out_str}")
 
             check_in_dt  = datetime.strptime(check_in_str,  "%Y-%m-%d")
             check_out_dt = datetime.strptime(check_out_str, "%Y-%m-%d")
             nights       = (check_out_dt - check_in_dt).days
 
+            # ── Collect unique stay locations from itinerary ──────
             unique_locations, seen = [], set()
             for day in itinerary:
                 loc = day.get("stay_location") or day.get("location", "")
@@ -675,67 +804,119 @@ class AIHotelAgent:
                     meal_plan  = hotel_data["meal_plan"]
                     min_cap    = int(room.get("minimum_capacity", 2))
                     max_cap    = int(room.get("maximum_capacity", 3))
-                    price_per_room, extra_price, season_name = self._get_seasonal_price(room, check_in_dt, check_out_dt)
+
+                    # ── Season-based price using check_in date ────
+                    price_per_room, extra_price, season_name = self._get_seasonal_price(
+                        room, check_in_dt, check_out_dt
+                    )
+                    logger.info(
+                        f"📍 Location={location} Hotel={hotel_name} "
+                        f"Season={season_name} Price={price_per_room} Extra={extra_price}"
+                    )
+
                     map_per_person = float(meal_plan.get("map_price", 0))
                     calc           = self._calculate_rooms_and_extra(guests, min_cap, max_cap)
                     rooms_needed   = calc["rooms_needed"]
                     extra_persons  = calc["extra_persons_total"]
                     hotel_total    = ((price_per_room * rooms_needed) + (extra_persons * extra_price)) * nights
                     map_total      = map_per_person * guests * nights
+
                     hotel_costs.append({
-                        "location": location, "hotel_name": hotel_name,
-                        "room_category": room_category, "price_per_room": price_per_room,
-                        "extra_person_price": extra_price, "rooms_needed": rooms_needed,
-                        "extra_persons_total": extra_persons, "min_capacity": min_cap,
-                        "max_capacity": max_cap, "hotel_total": hotel_total,
-                        "map_price_per_person": map_per_person, "map_total": map_total,
-                        "season_name": season_name,
+                        "location":            location,
+                        "hotel_name":          hotel_name,
+                        "room_category":       room_category,
+                        "price_per_room":      price_per_room,
+                        "extra_person_price":  extra_price,
+                        "rooms_needed":        rooms_needed,
+                        "extra_persons_total": extra_persons,
+                        "min_capacity":        min_cap,
+                        "max_capacity":        max_cap,
+                        "hotel_total":         hotel_total,
+                        "map_price_per_person": map_per_person,
+                        "map_total":           map_total,
+                        "season_name":         season_name,
                     })
                     selected_hotels[location] = hotel_name
                     total_hotel_price += hotel_total
                     total_map_price   += map_total
                 else:
+                    logger.warning(f"⚠️ No hotel found for location={location} category={hotel_category}")
                     hotel_costs.append({
-                        "location": location, "hotel_name": f"{hotel_category} Hotel",
-                        "room_category": room_category, "price_per_room": 0,
-                        "extra_person_price": 0, "rooms_needed": 0,
-                        "extra_persons_total": 0, "min_capacity": 2,
-                        "max_capacity": 3, "hotel_total": 0,
-                        "map_price_per_person": 0, "map_total": 0, "season_name": "N/A",
+                        "location":            location,
+                        "hotel_name":          f"{hotel_category} Hotel",
+                        "room_category":       room_category,
+                        "price_per_room":      0,
+                        "extra_person_price":  0,
+                        "rooms_needed":        0,
+                        "extra_persons_total": 0,
+                        "min_capacity":        2,
+                        "max_capacity":        3,
+                        "hotel_total":         0,
+                        "map_price_per_person": 0,
+                        "map_total":           0,
+                        "season_name":         "N/A",
                     })
                     selected_hotels[location] = f"{hotel_category} Hotel"
 
             context["selected_hotels"] = selected_hotels
 
-            vehicle_price = 0
-            vehicle_name  = "None"
+            # ── Vehicle price (season-aware × nights) ────────────
+            vehicle_price        = 0
+            vehicle_price_per_day = 0
+            vehicle_name         = "None"
+            vehicle_season_name  = "Regular Rate"
             if vehicle:
                 vehicle_name = vehicle.get("name", "Unknown")
+                # Check season on vehicle using check_in date
+                v_base = 0
                 try:
-                    vehicle_price = float(str(vehicle.get("price", 0)).replace(",", ""))
+                    v_base = float(str(vehicle.get("price", 0)).replace(",", ""))
                 except (ValueError, TypeError):
-                    vehicle_price = 0
+                    v_base = 0
 
+                v_seasons = vehicle.get("seasons", [])
+                v_matched = self._find_matching_season(v_seasons, check_in_dt, check_out_dt)
+                if v_matched:
+                    try:
+                        v_base = float(str(v_matched.get("price", v_base)).replace(",", ""))
+                        vehicle_season_name = v_matched.get("season_name", "Seasonal Rate")
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    vehicle_season_name = "Regular Rate"
+
+                vehicle_price_per_day = v_base
+                vehicle_price         = v_base * nights   # ← multiply by nights
+                logger.info(
+                    f"🚗 Vehicle={vehicle_name} Season={vehicle_season_name} "
+                    f"Price/day={v_base} Nights={nights} Total={vehicle_price}"
+                )
+
+            # ── Package margin ────────────────────────────────────
             package_margin = 0
             try:
                 margin_raw     = pkg.get("package_margin_price_manual", pkg.get("margin", "0"))
-                package_margin = float(str(margin_raw).replace(",", ""))
+                package_margin = float(str(margin_raw).replace(",", "")) if margin_raw else 0
             except (ValueError, TypeError):
                 package_margin = 0
 
             total_price = total_hotel_price + total_map_price + vehicle_price + package_margin
 
             context["pkg_price_details"] = {
-                "hotel_costs": hotel_costs,
-                "total_hotel_price": total_hotel_price,
-                "total_map_price": total_map_price,
-                "vehicle_price": vehicle_price,
-                "vehicle_name": vehicle_name,
-                "package_margin": package_margin,
-                "total_price": total_price,
-                "nights": nights,
-                "guests": guests,
-                "selected_hotels": selected_hotels,
+                "hotel_costs":           hotel_costs,
+                "total_hotel_price":     total_hotel_price,
+                "total_map_price":       total_map_price,
+                "vehicle_price":         vehicle_price,          # total = per_day × nights
+                "vehicle_price_per_day": vehicle_price_per_day,
+                "vehicle_season_name":   vehicle_season_name,
+                "vehicle_name":          vehicle_name,
+                "package_margin":        package_margin,
+                "total_price":           total_price,
+                "nights":                nights,
+                "guests":                guests,
+                "selected_hotels":       selected_hotels,
+                "check_in":              check_in_str,
+                "check_out":             check_out_str,
             }
             context["step"] = "pkg_show_itinerary"
             self._save(state, context)
@@ -857,7 +1038,7 @@ class AIHotelAgent:
                 return self._ask_for_field(missing, context)
 
         # ════════════════════════════════════════════════════════
-        #  HOTEL BUTTON HANDLERS
+        #  HOTEL BUTTON HANDLERS  (unchanged)
         # ════════════════════════════════════════════════════════
 
         if svc == "hotel":
@@ -884,19 +1065,16 @@ class AIHotelAgent:
                     price_result = self.execute_tool(
                         "calculate_room_price",
                         {"room": room, "check_in": context["check_in"],
-                        "check_out": context["check_out"], "guests": context["guests"]},
+                         "check_out": context["check_out"], "guests": context["guests"]},
                         tools,
                     )
                     if price_result.get("success"):
                         context["price_details"] = price_result
                         context["step"]          = "select_meal"
                         self._save(state, context)
-                        
-                      
                         extra_info = ""
                         if price_result.get('extra_people', 0) > 0:
                             extra_info = f"\n  └ Extra ({price_result['extra_people']} persons): Rs.{price_result['extra_total']:,.0f}"
-                        
                         return {
                             "type": "buttons",
                             "content": (
@@ -904,7 +1082,7 @@ class AIHotelAgent:
                                 f"*{context.get('selected_hotel')}*\n"
                                 f"*Room Category* {room.get('category')}\n"
                                 f"*Room Type* {room.get('type')}\n"
-                                f"*Room Total * Rs.{price_result['grand_total']:,.0f} "
+                                f"*Room Total* Rs.{price_result['grand_total']:,.0f} "
                                 f"({price_result['nights']} nights / {price_result['rooms_needed']} room(s)){extra_info}\n\n"
                                 f"Select your *meal plan*"
                             ),
@@ -965,7 +1143,7 @@ class AIHotelAgent:
                     context[k] = None
                 context["step"] = "collect_info"
                 self._save(state, context)
-                return {"type": "text", "content": "📍 Which city would you like to search hotels in?"}
+                return {"type": "text", "content": "Which city would you like to search hotels in?"}
 
             if msg == "confirm" and context.get("step") == "final_summary":
                 return self._confirm_hotel_booking(phone, business_phone, state)
@@ -1068,7 +1246,7 @@ class AIHotelAgent:
                 return self._confirm_package_booking(context, phone, business_phone, state)
 
         # ════════════════════════════════════════════════════════
-        #  NATURAL LANGUAGE HANDLING  (shared intent extraction)
+        #  NATURAL LANGUAGE HANDLING
         # ════════════════════════════════════════════════════════
 
         intent = self._extract_intent(user_message)
@@ -1118,12 +1296,12 @@ class AIHotelAgent:
             except (TypeError, ValueError):
                 pass
 
-        # ── Bare-number guest shortcut (before city check) ────────
+        # ── Bare-number guest shortcut ────────────────────────────
         if (
             not context.get("guests")
             and context.get("destination")
             and context.get("check_in")
-            and context.get("check_out")
+            and (svc == "package" or context.get("check_out"))
         ):
             bare = self._try_parse_guest_count(user_message)
             if bare is not None:
@@ -1135,7 +1313,54 @@ class AIHotelAgent:
                 if svc == "package":
                     return self._pkg_fetch_hotel_categories(context, tools, state)
 
-        # ── Smart city validation ─────────────────────────────────
+        # ════════════════════════════════════════════════════════
+        #  PACKAGE — DEDICATED START DATE COLLECTION
+        #  (runs when svc==package and check_in is missing)
+        # ════════════════════════════════════════════════════════
+        if svc == "package" and context.get("destination") and not context.get("check_in"):
+            date_result = self._extract_pkg_start_date(user_message)
+
+            if date_result.get("start_date"):
+                context["check_in"]  = date_result["start_date"]
+                context["check_out"] = None   # will be derived later from itinerary
+                logger.info(f"✅ Package start date set: {context['check_in']}")
+                self._save(state, context)
+                # Continue to ask for guests or advance
+                if not context.get("guests"):
+                    return self._ask_for_field("guests", context)
+                # All basics collected — go to hotel category selection
+                return self._pkg_fetch_hotel_categories(context, tools, state)
+
+            elif date_result.get("is_past"):
+                self._save(state, context)
+                return {
+                    "type": "text",
+                    "content": (
+                        f"⚠️ {date_result.get('error', 'That date is in the past.')}\n\n"
+                        f"Please provide a *future* starting date.\n"
+                        f"Examples: _15 June_ · _20_ · _tomorrow_ · _after 5 days_"
+                    )
+                }
+            else:
+                # Could not parse date — ask again
+                # But first check if message might be a guest count
+                bare = self._try_parse_guest_count(user_message)
+                if bare is not None and not context.get("guests"):
+                    context["guests"] = bare
+                    self._save(state, context)
+                    # Now we still need the date
+                    return self._ask_for_field("dates", context)
+
+                self._save(state, context)
+                return {
+                    "type": "text",
+                    "content": (
+                        f"📅 Please share your *trip starting date* for {context.get('destination')}.\n\n"
+                        f"Examples: _15 June_ · _20_ · _tomorrow_ · _after 5 days_"
+                    )
+                }
+
+        # ── Smart city validation (shared) ────────────────────────
         city_to_check = intent.get("city") or (
             intent.get("possible_city")
             if not context.get("destination") and svc
@@ -1155,26 +1380,27 @@ class AIHotelAgent:
                 self._save(state, context)
                 return {"type": "text", "content": f"⚠️ {error_msg}"}
 
-        # ── Merge dates ───────────────────────────────────────────
-        if intent.get("check_in"):
-            context["check_in"]  = intent["check_in"]
-        if intent.get("check_out"):
-            context["check_out"] = intent["check_out"]
+   
+        if svc != "package":
+           
+            if intent.get("check_in"):
+                context["check_in"]  = intent["check_in"]
+            if intent.get("check_out"):
+                context["check_out"] = intent["check_out"]
 
-        # ── Validate dates ────────────────────────────────────────
-        if context.get("check_in") and context.get("check_out"):
-            validation = self._validate_dates(context["check_in"], context["check_out"])
-            if not validation.get("valid"):
-                context["check_in"]  = None
-                context["check_out"] = None
-                self._save(state, context)
-                return {
-                    "type": "text",
-                    "content": (
-                        f"⚠️ {validation['error']} Please provide valid dates.\n\n"
-                        "Examples: 12 June to 16 June  |  12 to 16  |  next week  |  after 10 days"
-                    )
-                }
+            # Validate hotel dates
+            if context.get("check_in") and context.get("check_out"):
+                validation = self._validate_dates(context["check_in"], context["check_out"])
+                if not validation.get("valid"):
+                    context["check_in"]  = None
+                    context["check_out"] = None
+                    self._save(state, context)
+                    return {
+                        "type": "text",
+                        "content": (
+                            f"⚠️ {validation['error']} Please provide valid dates."
+                        )
+                    }
 
         # ── Merge guests (secondary fallback) ─────────────────────
         if not context.get("guests"):
