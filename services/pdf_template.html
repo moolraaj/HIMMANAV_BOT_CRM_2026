@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{package_name}} - Travel Package</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        @page {
+            size: A4;
+            margin: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
+            background: #e2e8f0;
+            line-height: 1.5;
+        }
+
+        /* PDF Page Container */
+        .pdf-page {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto 20px auto;
+            background: white;
+            position: relative;
+            page-break-after: always;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .pdf-page:last-child {
+            margin-bottom: 0;
+        }
+
+        /* ========== COVER PAGE ========== */
+        .cover {
+            position: relative;
+            height: 297mm;
+            background: #1a1a2e;
+        }
+
+        .cover-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.8;
+        }
+
+        .cover-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(135deg, rgba(26,26,46,0.95) 0%, rgba(26,26,46,0.85) 100%);
+        }
+
+        .cover-content {
+            position: absolute;
+            bottom: 15%;
+            left: 0;
+            right: 0;
+            text-align: center;
+            padding: 0 40px;
+            z-index: 2;
+        }
+
+        .package-badge {
+            display: inline-block;
+            background: rgba(245,166,35,0.2);
+            backdrop-filter: blur(10px);
+            padding: 8px 20px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: #F5A623;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+        }
+
+        .package-name {
+            font-size: 48px;
+            font-weight: 800;
+            color: white;
+            margin-bottom: 15px;
+            line-height: 1.2;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .package-dest {
+            font-size: 18px;
+            color: #F5A623;
+            margin-bottom: 40px;
+            font-weight: 500;
+        }
+
+        .pill-group {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 30px;
+        }
+
+        .pill {
+            background: #F5A623;
+            padding: 12px 28px;
+            border-radius: 50px;
+            text-align: center;
+            min-width: 130px;
+        }
+
+        .pill-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #1a1a2e;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .pill-value {
+            font-size: 16px;
+            font-weight: 800;
+            color: #1a1a2e;
+        }
+
+        .footer-mark {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 9px;
+            color: #F5A623;
+            opacity: 0.7;
+            z-index: 2;
+        }
+
+        /* ========== CONTENT PAGES ========== */
+        .content-page {
+            padding: 40px 35px;
+        }
+
+        /* Section Header */
+        .section-header {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 18px 24px;
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .section-header::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 5px;
+            height: 100%;
+            background: #F5A623;
+        }
+
+        .section-title {
+            font-size: 22px;
+            font-weight: 800;
+            color: white;
+            margin-bottom: 6px;
+        }
+
+        .section-subtitle {
+            font-size: 12px;
+            color: #F5A623;
+        }
+
+        /* Info Grid */
+        .info-grid {
+            background: #F8F6F0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+
+        .info-row {
+            display: flex;
+            padding: 14px 20px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-row:nth-child(even) {
+            background: #EEEAE0;
+        }
+
+        .info-label {
+            width: 35%;
+            font-weight: 700;
+            color: #F5A623;
+            font-size: 13px;
+        }
+
+        .info-value {
+            width: 65%;
+            color: #2d3748;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        /* Price Card */
+        .price-card {
+            background: #F8F6F0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+
+        .price-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .price-row:nth-child(even) {
+            background: #EEEAE0;
+        }
+
+        .price-row.total {
+            background: #1a1a2e;
+            border-bottom: none;
+        }
+
+        .price-row.total .price-label {
+            color: white;
+            font-weight: 800;
+            font-size: 15px;
+        }
+
+        .price-row.total .price-amount {
+            color: #F5A623;
+            font-weight: 800;
+            font-size: 18px;
+        }
+
+        .price-label {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .price-amount {
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        /* Day Card */
+        .day-card {
+            background: #F8F6F0;
+            border-radius: 16px;
+            margin-bottom: 25px;
+            overflow: hidden;
+            page-break-inside: avoid;
+            break-inside: avoid;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .day-img-container {
+            position: relative;
+            height: 200px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .day-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .day-badge {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            background: #F5A623;
+            padding: 8px 18px;
+            border-radius: 30px;
+            font-weight: 800;
+            font-size: 14px;
+            color: #1a1a2e;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        .day-content {
+            padding: 20px;
+        }
+
+        .day-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #1a1a2e;
+            margin-bottom: 12px;
+        }
+
+        .day-location {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #F5A623;
+            padding: 5px 14px;
+            border-radius: 30px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 15px;
+        }
+
+        .day-location::before {
+            content: '📍';
+            font-size: 12px;
+        }
+
+        .day-desc {
+            color: #4a5568;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        /* Lists (Inclusions/Exclusions) */
+        .list-group {
+            margin-bottom: 25px;
+        }
+
+        .list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #F8F6F0;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+
+        .list-item:nth-child(even) {
+            background: #EEEAE0;
+        }
+
+        .list-icon {
+            font-size: 16px;
+            font-weight: 800;
+        }
+
+        .list-icon.included {
+            color: #10b981;
+        }
+
+        .list-icon.excluded {
+            color: #ef4444;
+        }
+
+        .list-text {
+            flex: 1;
+            font-size: 13px;
+            color: #2d3748;
+        }
+
+        /* Activity Cards */
+        .activity-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 15px;
+        }
+
+        .activity-card {
+            background: #F8F6F0;
+            padding: 12px 16px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .activity-icon {
+            font-size: 20px;
+        }
+
+        .activity-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        /* Thank You Page */
+        .thankyou-page {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .thankyou-content {
+            padding: 40px;
+        }
+
+        .thankyou-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .thankyou-title {
+            font-size: 36px;
+            font-weight: 800;
+            margin-bottom: 15px;
+        }
+
+        .thankyou-text {
+            font-size: 14px;
+            color: #cbd5e1;
+            margin-bottom: 40px;
+            max-width: 400px;
+        }
+
+        .total-card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 30px;
+            margin-top: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .total-label-card {
+            font-size: 13px;
+            font-weight: 600;
+            color: #F5A623;
+            margin-bottom: 8px;
+        }
+
+        .total-amount-card {
+            font-size: 42px;
+            font-weight: 800;
+            color: white;
+            margin-bottom: 10px;
+        }
+
+        .total-meta {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .page-number {
+            text-align: center;
+            font-size: 9px;
+            color: #94a3b8;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        /* Print Styles */
+        @media print {
+            body {
+                background: white;
+                margin: 0;
+                padding: 0;
+            }
+            .pdf-page {
+                margin: 0;
+                box-shadow: none;
+                page-break-after: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- COVER PAGE -->
+    <div class="pdf-page cover">
+        {% if cover_image %}
+        <img src="{{ cover_image }}" class="cover-bg" alt="{{ package_name }}">
+        {% else %}
+        <div class="cover-bg" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"></div>
+        {% endif %}
+        <div class="cover-overlay"></div>
+        <div class="cover-content">
+            <div class="package-badge">PREMIUM ESCAPE</div>
+            <h1 class="package-name">{{ package_name }}</h1>
+            <div class="package-dest">{{ destination }} • {{ nights }} Nights</div>
+            <div class="pill-group">
+                <div class="pill">
+                    <div class="pill-label">Destination</div>
+                    <div class="pill-value">{{ destination|truncate(15, true) }}</div>
+                </div>
+                <div class="pill">
+                    <div class="pill-label">Duration</div>
+                    <div class="pill-value">{{ nights }}N/{{ nights+1 }}D</div>
+                </div>
+                <div class="pill">
+                    <div class="pill-label">Guests</div>
+                    <div class="pill-value">{{ guests }} Pax</div>
+                </div>
+            </div>
+        </div>
+        <div class="footer-mark">TRAVEL PACKAGE • POWERED BY YOUR TRAVEL ASSISTANT</div>
+    </div>
+
+    <!-- PAGE 2: BOOKING SUMMARY -->
+    <div class="pdf-page content-page">
+        <div class="section-header">
+            <div class="section-title">Booking Summary</div>
+            <div class="section-subtitle">{{ package_name }}</div>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-row">
+                <div class="info-label">PACKAGE</div>
+                <div class="info-value">{{ package_name }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">DESTINATION</div>
+                <div class="info-value">{{ destination }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">CHECK-IN</div>
+                <div class="info-value">{{ check_in or 'To be confirmed' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">CHECK-OUT</div>
+                <div class="info-value">{{ check_out or 'To be confirmed' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">NIGHTS</div>
+                <div class="info-value">{{ nights }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">GUESTS</div>
+                <div class="info-value">{{ guests }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">HOTEL CATEGORY</div>
+                <div class="info-value">{{ hotel_category or 'Premium' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">ROOM CATEGORY</div>
+                <div class="info-value">{{ room_category or 'Double Sharing' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">VEHICLE</div>
+                <div class="info-value">{{ vehicle_name or 'Tempo Traveller / Scorpio' }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">MEAL PLAN</div>
+                <div class="info-value">MAP (Breakfast + Dinner)</div>
+            </div>
+        </div>
+
+        <div class="section-header" style="margin-top: 10px;">
+            <div class="section-title">Price Breakdown</div>
+        </div>
+
+        <div class="price-card">
+            <div class="price-row">
+                <span class="price-label">Hotel Cost ({{ nights }} nights)</span>
+                <span class="price-amount">{{ hotel_price }}</span>
+            </div>
+            <div class="price-row">
+                <span class="price-label">MAP Meals (Breakfast + Dinner)</span>
+                <span class="price-amount">{{ map_price }}</span>
+            </div>
+            {% if vehicle_price %}
+            <div class="price-row">
+                <span class="price-label">Vehicle — {{ vehicle_name }}</span>
+                <span class="price-amount">{{ vehicle_price }}</span>
+            </div>
+            {% endif %}
+            {% if service_charge %}
+            <div class="price-row">
+                <span class="price-label">Service Charge</span>
+                <span class="price-amount">{{ service_charge }}</span>
+            </div>
+            {% endif %}
+            <div class="price-row total">
+                <span class="price-label">GRAND TOTAL</span>
+                <span class="price-amount">{{ total_price }}</span>
+            </div>
+        </div>
+
+        <div class="page-number">Page 2</div>
+    </div>
+
+    <!-- ITINERARY PAGES -->
+    {% for day in itinerary %}
+    <div class="pdf-page content-page">
+        <div class="day-card">
+            <div class="day-img-container">
+                {% if day.image %}
+                <img src="{{ day.image }}" class="day-img" alt="{{ day.title }}" onerror="this.style.display='none'">
+                {% endif %}
+                <div class="day-badge">DAY {{ loop.index }}</div>
+            </div>
+            <div class="day-content">
+                <h3 class="day-title">{{ day.title }}</h3>
+                <div class="day-location">{{ day.location }}</div>
+                <p class="day-desc">{{ day.overview }}</p>
+            </div>
+        </div>
+        <div class="page-number">Page {{ loop.index + 2 }}</div>
+    </div>
+    {% endfor %}
+
+    <!-- INCLUSIONS & EXCLUSIONS -->
+    <div class="pdf-page content-page">
+        <div class="section-header">
+            <div class="section-title">What's Included</div>
+        </div>
+        
+        <div class="list-group">
+            {% for item in inclusions %}
+            <div class="list-item">
+                <span class="list-icon included">✓</span>
+                <span class="list-text">{{ item }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="section-header" style="margin-top: 20px;">
+            <div class="section-title">What's Not Included</div>
+        </div>
+
+        <div class="list-group">
+            {% for item in exclusions %}
+            <div class="list-item">
+                <span class="list-icon excluded">✗</span>
+                <span class="list-text">{{ item }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if activities %}
+        <div class="section-header" style="margin-top: 20px;">
+            <div class="section-title">Activities & Experiences</div>
+        </div>
+        <div class="activity-grid">
+            {% for activity in activities %}
+            <div class="activity-card">
+                <span class="activity-icon">★</span>
+                <span class="activity-name">{{ activity }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="page-number">Page {{ itinerary|length + 3 }}</div>
+    </div>
+
+    <!-- THANK YOU PAGE -->
+    <div class="pdf-page thankyou-page">
+        <div class="thankyou-content">
+            <div class="thankyou-icon">✨</div>
+            <h2 class="thankyou-title">Thank You For Choosing Us!</h2>
+            <p class="thankyou-text">
+                Your journey to {{ destination }} awaits. We have prepared every detail 
+                to make your {{ nights }}-night trip unforgettable.
+            </p>
+            <div class="total-card">
+                <div class="total-label-card">TOTAL PACKAGE COST</div>
+                <div class="total-amount-card">{{ total_price }}</div>
+                <div class="total-meta">{{ guests }} Guest{% if guests > 1 %}s{% endif %} • {{ nights }} Nights</div>
+            </div>
+        </div>
+        <div class="footer-mark">Safe Travels • Until Next Time!</div>
+    </div>
+</body>
+</html>

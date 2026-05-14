@@ -344,53 +344,52 @@ def card_pkg_packages(context: Dict) -> Dict:
 
 
 def card_pkg_summary(context: Dict) -> Dict:
-    """
-    Package summary — shows:
-    - Booking summary (package name, destination, start date, auto-derived end date, nights, guests)
-    - Package details (hotel cat, room cat, vehicle)
-    - Itinerary (per day: location, hotel, season used, vehicle)
-    - Price breakdown (hotel cost per location with season, MAP meal, vehicle, margin)
-    - Grand total
-    """
     pd             = context.get("pkg_price_details", {})
     nights         = pd.get("nights", 0)
     total_price    = pd.get("total_price", 0)
     total_hotel    = pd.get("total_hotel_price", 0)
     total_map      = pd.get("total_map_price", 0)
-    vehicle_price  = pd.get("vehicle_price", 0)          # total (per_day × nights)
+    vehicle_price  = pd.get("vehicle_price", 0)
     vehicle_per_day = pd.get("vehicle_price_per_day", 0)
+    vehicle_days   = pd.get("vehicle_days", 0)
     vehicle_season  = pd.get("vehicle_season_name", "")
     vehicle_name   = pd.get("vehicle_name", "None")
     package_margin = pd.get("package_margin", 0)
     guests         = pd.get("guests", 1)
     selected_hotels = pd.get("selected_hotels", {})
     hotel_costs    = pd.get("hotel_costs", [])
+    embedded_vehicle_costs = pd.get("embedded_vehicle_costs", [])
+    total_embedded_price   = pd.get("total_embedded_price", 0)
 
     pkg       = context.get("selected_package", {})
     pkg_name  = pkg.get("package_name") or pkg.get("title", "Package")
     itinerary = pkg.get("itinerary", [])
 
-    # Use dates from pkg_price_details (most up-to-date) or context fallback
     check_in  = pd.get("check_in",  context.get("check_in",  ""))
     check_out = pd.get("check_out", context.get("check_out", ""))
     dest      = context.get("destination", "")
 
-    # Build a quick season-name lookup by location
+    # Build season-name lookup by location
     season_by_location = {}
     for hc in hotel_costs:
-        loc  = hc.get("location", "")
-        sn   = hc.get("season_name", "")
+        loc = hc.get("location", "")
+        sn  = hc.get("season_name", "")
         if loc and sn:
             season_by_location[loc] = sn
 
+    # Build embedded vehicle lookup by day
+    embedded_by_day = {}
+    for ev in embedded_vehicle_costs:
+        embedded_by_day[ev.get("day", "")] = ev
+
     # ── Booking Summary ───────────────────────────────────────────
     content  = _section_header("Booking Summary")
-    content += _row("Package",        pkg_name)
-    content += _row("Destination",    dest)
-    content += _row("Start Date",     check_in)
-    content += _row("End Date",       check_out)
-    content += _row("Nights",         str(nights))
-    content += _row("Guests",         str(guests))
+    content += _row("Package",     pkg_name)
+    content += _row("Destination", dest)
+    content += _row("Start Date",  check_in)
+    content += _row("End Date",    check_out)
+    content += _row("Nights",      str(nights))
+    content += _row("Guests",      str(guests))
     content += "\n"
 
     # ── Package Details ───────────────────────────────────────────
@@ -407,26 +406,38 @@ def card_pkg_summary(context: Dict) -> Dict:
 
     # ── Itinerary ─────────────────────────────────────────────────
     content += _section_header("Itinerary")
-    shown_days = 0
     for i, day in enumerate(itinerary):
-        day_label = day.get("day", f"Day {i}")
-        title     = day.get("title", "")
-        loc       = day.get("stay_location") or day.get("location", dest)
+        day_label  = day.get("day", f"Day {i}")
+        title      = day.get("title", "")
+        loc        = day.get("stay_location") or day.get("location", dest)
+        season     = season_by_location.get(loc, "")
         hotel_name = selected_hotels.get(loc, context.get("hotel_category", "Hotel"))
-        season    = season_by_location.get(loc, "")
+        ev         = embedded_by_day.get(day_label)
 
         content += f"*{day_label}:* {title}\n"
-        content += f"  *Location:* {loc}\n"
-        content += f"  *Hotel:* {hotel_name}\n"
-        if season and season != "N/A":
-            content += f"  *Season:* {season}\n"
-        content += f"  *Vehicle:* {vehicle_name}\n"
-        content += "\n"
-        shown_days += 1
 
-    # ── Price Breakdown per Location ──────────────────────────────
+        if ev:
+            # Embedded volvo or vehicle day — no hotel
+            content += f"  *Transport:* {ev['name']}\n"
+            if ev.get("season_name") not in ("Regular Rate", ""):
+                content += f"  *Season:* {ev['season_name']}\n"
+            content += f"  *Cost:* {fp(ev['price'])}\n"
+        else:
+            # Normal stay day
+            if loc:
+                content += f"  *Location:* {loc}\n"
+                content += f"  *Hotel:* {hotel_name}\n"
+                if season and season != "N/A":
+                    content += f"  *Season:* {season}\n"
+            if day.get("vehicle_include") == "Yes":
+                content += f"  *Vehicle:* {vehicle_name}\n"
+
+        content += "\n"
+
+    # ── Price Details ─────────────────────────────────────────────
     content += _section_header("Price Details")
 
+    # Hotel cost per location
     if hotel_costs:
         for hc in hotel_costs:
             loc        = hc.get("location", "")
@@ -437,28 +448,41 @@ def card_pkg_summary(context: Dict) -> Dict:
             extra_p    = hc.get("extra_persons_total", 0)
             extra_pr   = hc.get("extra_person_price", 0)
             h_total    = hc.get("hotel_total", 0)
+            loc_nights = hc.get("nights", nights)
 
             content += f"*{loc} — {h_name}*\n"
             content += f"  Season: {season_nm}\n"
-            content += f"  Rs.{int(price_room):,}/night × {rooms_n} room(s) × {nights} nights"
+            content += f"  Rs.{int(price_room):,}/night × {rooms_n} room(s) × {loc_nights} nights"
             if extra_p > 0:
                 content += f" + {extra_p} extra person(s) @ Rs.{int(extra_pr):,}/night"
             content += f" = *{fp(h_total)}*\n"
         content += "\n"
 
-    content += _row(f"Total Hotel Cost ({nights} nights)", fp(total_hotel))
-    content += _row("MAP Meal (Breakfast + Dinner)",        fp(total_map))
+    content += _row("Total Hotel Cost", fp(total_hotel))
+    content += _row("MAP Meal (Breakfast + Dinner)", fp(total_map))
+
+    # User-selected vehicle (only vehicle_include days)
     if vehicle_price > 0:
-        v_line = f"{fp(vehicle_per_day)}/day × {nights} nights = {fp(vehicle_price)}"
+        v_line = f"{fp(vehicle_per_day)}/day × {vehicle_days} days = {fp(vehicle_price)}"
         if vehicle_season and vehicle_season not in ("Regular Rate", ""):
             v_line += f"  _(Season: {vehicle_season})_"
         content += _row(f"Vehicle Cost ({vehicle_name})", v_line)
+
+    # Embedded vehicles (volvo / day vehicle)
+    if embedded_vehicle_costs:
+        for ev in embedded_vehicle_costs:
+            ev_line = f"{fp(ev['price'])}"
+            if ev.get("season_name") not in ("Regular Rate", ""):
+                ev_line += f"  _(Season: {ev['season_name']})_"
+            content += _row(f"{ev['day']} Transport ({ev['name']})", ev_line)
+
     if package_margin > 0:
         content += _row("Service Charge", fp(package_margin))
+
     content += "\n"
     content += f"*GRAND TOTAL:  {fp(total_price)}*\n\n"
 
-    # ── Cards ─────────────────────────────────────────────────────
+    # ── Action Cards ──────────────────────────────────────────────
     card_summary = {
         "type": "text",
         "content": content,
@@ -488,12 +512,13 @@ def card_pkg_summary(context: Dict) -> Dict:
 def card_vehicles_list(context: Dict) -> Dict:
     """Vehicle listing - same pattern as card_hotel_rooms."""
     vehicles         = context.get("vehicles_list", [])
-    vehicle_category = context.get("vehicle_category", "Vehicle")
     check_in_str     = context.get("check_in", "")
 
     def get_vehicle_seasonal_price(vehicle: Dict, check_in_date: str) -> tuple:
         from datetime import datetime
-        base_price = float(str(vehicle.get("price", "0")).replace(",", ""))
+        
+        raw_price  = vehicle.get("price", vehicle.get("vehicle_price", "0"))
+        base_price = float(str(raw_price).replace(",", ""))
         if not check_in_date:
             return base_price, "Standard Rate"
         try:
@@ -528,12 +553,10 @@ def card_vehicles_list(context: Dict) -> Dict:
 
         price, season_name = get_vehicle_seasonal_price(vehicle, check_in_str)
 
-        caption  = f"*{vehicle_category} Vehicle*\n"
-        caption += f"*{name}*\n"
+        
+        caption  = f"*{name}*\n"
         caption += f"*Capacity:* {capacity} seater\n"
-        caption += f"*Price:* Rs.{int(price):,}/trip\n"
-        if season_name != "Standard Rate":
-            caption += f"*Season:* {season_name}\n"
+       
 
         if image_url and image_url.startswith(('http://', 'https://')):
             responses.append({
@@ -543,11 +566,9 @@ def card_vehicles_list(context: Dict) -> Dict:
                 "buttons": [{"text": "Select Vehicle", "value": f"select_vehicle_{i}"}]
             })
         else:
-            text_content  = f"*{i + 1}. {name}*\n"
+            text_content  = f"*{name}*\n"
             text_content += f"*Capacity:* {capacity} seater\n"
-            text_content += f"*Price:* Rs.{int(price):,}/trip\n"
-            if season_name != "Standard Rate":
-                text_content += f"*Season:* {season_name}\n"
+ 
             responses.append({
                 "type": "buttons",
                 "content": text_content,

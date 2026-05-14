@@ -14,4 +14,8 @@ Pillow
 flask_socketio
 eventlet
 dateparser
+jinja2
+pdfkit
+requests
+pillow
 

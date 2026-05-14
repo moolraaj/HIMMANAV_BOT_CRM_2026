@@ -235,7 +235,7 @@ class TravelTools:
 
     # ── PACKAGES ──────────────────────────────────────────────────────────────
 
-    def get_packages(self, destination: str = None) -> Dict[str, Any]:
+    def get_packages(self, destination: str = None, cities: list = None) -> Dict[str, Any]:
         try:
             params = self._phone_params()
             response = self.session.get(PACKAGES_API, params=params, timeout=30)
@@ -243,14 +243,24 @@ class TravelTools:
             data = response.json()
             all_packages = data if isinstance(data, list) else data.get("packages", data.get("data", []))
 
-            if destination:
-                dest_lower = destination.lower()
-                matched = [
-                    p for p in all_packages
-                    if dest_lower in str(p.get("locations", [])).lower()
-                    or dest_lower in p.get("title", "").lower()
-                    or dest_lower in p.get("package_name", "").lower()
-                ]
+            
+            search_terms = []
+            if cities:
+                search_terms = [c.lower() for c in cities if c]
+            elif destination:
+                search_terms = [destination.lower()]
+
+            if search_terms:
+                def package_matches(p):
+                    pkg_text = (
+                        str(p.get("locations", [])).lower()
+                        + p.get("title", "").lower()
+                        + p.get("package_name", "").lower()
+                    )
+                  
+                    return any(term in pkg_text for term in search_terms)
+
+                matched = [p for p in all_packages if package_matches(p)]
                 return {"success": True, "packages": matched, "count": len(matched)}
 
             return {"success": True, "packages": all_packages, "count": len(all_packages)}
@@ -258,7 +268,7 @@ class TravelTools:
             logger.error(f"Packages error: {e}")
             return {"success": False, "error": str(e), "packages": []}
 
-    # ── HOTELS FOR PACKAGE ────────────────────────────────────────────────────
+   
 
     def get_hotels_in_location_for_package(self, location: str, hotel_category: str = None) -> Dict[str, Any]:
         try:
