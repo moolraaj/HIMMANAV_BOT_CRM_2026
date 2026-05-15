@@ -80,11 +80,25 @@ def fetch_packages(context: Dict, tools: TravelTools, state) -> Dict:
             context["step"] = "pkg_show_packages"
             save_context(state, context)
             return card_pkg_packages(context)
-        return {"type": "text", "content": f"No packages found for {context['destination']}. Please try a different destination."}
+        
+         
+        return {
+            "type": "buttons",
+            "content": (
+                f"⚠️ No packages found for *{context.get('destination')}* with:\n"
+                f"• Hotel Category: *{context.get('hotel_category')}*\n"
+                f"• Room Category: *{context.get('room_category')}*\n\n"
+                f"What would you like to do?"
+            ),
+            "buttons": [
+                {"text": "🏨 Change Hotel Category", "value": "pkg_change_hotel"},
+                {"text": "🛏️ Change Room Category", "value": "pkg_change_room"},
+                {"text": "🏙️ Change Destination", "value": "change_city"},
+            ]
+        }
     except Exception as e:
         logger.error(f"fetch_packages error: {e}")
         return {"type": "text", "content": "Unable to fetch packages. Please try again."}
-
 
 # ─────────────────────────────────────────────────────────────
 # PACKAGE VEHICLES 
@@ -102,12 +116,21 @@ def fetch_package_vehicles(context: Dict, tools: TravelTools, state) -> Dict:
         raw_vehicles = pkg.get("vehicles", [])
 
         if not raw_vehicles:
-            return {"type": "text", "content": "⚠️ No vehicles are included in this package."}
+            return {
+                "type": "buttons",
+                "content": (
+                    f"⚠️ No vehicles are included in *{pkg.get('package_name', 'this package')}*.\n\n"
+                    f"You can continue with the booking without a vehicle, or choose a different package."
+                ),
+                "buttons": [
+                    {"text": "✅ Continue", "value": "pkg_continue_without_vehicle"},
+                    {"text": "📦 Other Packages", "value": "pkg_other_packages"},
+                ]
+            }
 
         normalised = []
         for v in raw_vehicles:
             if isinstance(v, str):
-                logger.warning(f"Skipping plain-string vehicle entry: {v}")
                 continue
             normalised.append({
                 "name":             v.get("vehicle_name", v.get("name", "Vehicle")),
@@ -121,17 +144,29 @@ def fetch_package_vehicles(context: Dict, tools: TravelTools, state) -> Dict:
             })
 
         if not normalised:
-            return {"type": "text", "content": "⚠️ No vehicles are available for this package."}
+            return {
+                "type": "buttons",
+                "content": "⚠️ No valid vehicles available for this package.\n\nWould you like to continue without a vehicle?",
+                "buttons": [
+                    {"text": "✅ Continue", "value": "pkg_continue_without_vehicle"},
+                ]
+            }
 
         context["vehicles_list"] = normalised
         context["step"]          = "pkg_ask_vehicle"
         save_context(state, context)
-        logger.info(f"🚗 Showing {len(normalised)} package vehicles")
         return card_vehicles_list(context)
 
     except Exception as e:
         logger.error(f"fetch_package_vehicles error: {e}", exc_info=True)
-        return {"type": "text", "content": f"Error loading vehicles: {str(e)}"}
+        return {
+            "type": "buttons",
+            "content": f"⚠️ Error loading vehicles: {str(e)}\n\nWould you like to continue without a vehicle?",
+            "buttons": [
+                {"text": "✅ Continue Without Vehicle", "value": "pkg_continue_without_vehicle"},
+                {"text": "📦 Other Packages", "value": "pkg_other_packages"},
+            ]
+        }
 
 
 # ─────────────────────────────────────────────────────────────

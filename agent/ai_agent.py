@@ -194,7 +194,7 @@ class AIHotelAgent:
                 return hotel.handle_change_city(context, state)
 
             if msg == "confirm" and context.get("step") == "final_summary":
-                return hotel.confirm_hotel_booking(phone, business_phone, state, self._reset_to_welcome)
+                return hotel.confirm_hotel_booking(context, phone, business_phone, state, self._reset_to_welcome)
 
         # ════════════════════════════════════════════════════════
         #  PACKAGE BUTTON HANDLERS
@@ -282,6 +282,22 @@ class AIHotelAgent:
                 self._save(state, context)
                 return pkg.fetch_hotel_categories(context, tools, state)
 
+            if msg == "pkg_continue_without_vehicle":
+                context["vehicle"] = None
+                context["step"] = "pkg_calculate_price"
+                self._save(state, context)
+                return pkg.calculate_and_show_price(context, tools, state)
+                
+
+            if msg == "pkg_change_room":
+                context["room_category"] = None
+                context["step"] = "pkg_ask_room_category"
+                self._save(state, context)
+                return pkg.fetch_room_categories(context, tools, state)
+
+            
+            
+
             if msg in ("pkg_book_now", "pkg_confirm_package"):
                 return pkg.confirm_package_booking(
                     context, phone, business_phone, state, self._reset_to_welcome)
@@ -299,7 +315,8 @@ class AIHotelAgent:
         # Free-text confirm
         if intent.get("confirm_booking"):
             if svc == "hotel" and context.get("step") == "final_summary":
-                return hotel.confirm_hotel_booking(phone, business_phone, state, self._reset_to_welcome)
+                return hotel.confirm_hotel_booking(
+                    context, phone, business_phone, state, self._reset_to_welcome) 
             if svc == "package" and context.get("step") in ("pkg_show_itinerary", "pkg_final_summary"):
                 return pkg.confirm_package_booking(
                     context, phone, business_phone, state, self._reset_to_welcome)
@@ -423,7 +440,6 @@ class AIHotelAgent:
                         "type": "text",
                         "content": (
                             f"⚠️ {v['error']} Please provide valid dates.\n\n"
-                            "Examples: 12 June to 16 June  |  next week  |  after 10 days"
                         )
                     }
 

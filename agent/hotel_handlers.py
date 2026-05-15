@@ -59,13 +59,23 @@ def handle_view_rooms(hotel_name: str, context: Dict, tools: TravelTools, state,
     """Fetch rooms for a hotel and show room cards."""
     context["selected_hotel"] = hotel_name
     result = execute_tool_fn("get_hotel_rooms", {"hotel_name": hotel_name}, tools)
-    if result.get("success"):
+    
+    if result.get("success") and result.get("rooms"):
         context["rooms_list"]     = result.get("rooms", [])
         context["meal_plan_data"] = result.get("meal_plan", {})
         context["step"]           = "show_rooms"
         save_context(state, context)
         return format_rooms(context)
-    return {"type": "text", "content": f"Couldn't fetch rooms for {hotel_name}. Please try another hotel."}
+
+    return {
+        "type": "buttons",
+        "content": f"⚠️ No rooms available at *{hotel_name}*.\n\nPlease try another hotel:",
+        "buttons": [
+            {"text": "Try Other Hotels", "value": "other_hotels"},
+            {"text": "⬅Back to Categories", "value": "back_to_categories"},
+            {"text": "Change City", "value": "change_city"},
+        ]
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -151,27 +161,30 @@ def handle_meal_selection(meal_type: str, context: Dict, tools: TravelTools, sta
 # CONFIRM HOTEL BOOKING
 # ─────────────────────────────────────────────────────────────
 
-def confirm_hotel_booking(phone: str, business_phone: str, state, reset_fn) -> Dict:
+def confirm_hotel_booking(context: Dict, phone: str, business_phone: str, state, reset_fn) -> Dict:
     from datetime import datetime
-    from services.email_service import send_admin_booking_alert  # ← add this import
+    from services.email_service import send_admin_booking_alert
 
     ref = f"HOTEL{datetime.now().strftime('%Y%m%d%H%M%S')}"
     logger.info(f"✅ HOTEL BOOKING CONFIRMED: {ref}")
 
-     
     booking_details = {
-        "package_name":    f"Hotel: {state.context.get('selected_hotel', 'N/A')}",
-        "package_id":      ref,
-        "package_price":   state.context.get("price_details", {}).get("grand_total", "N/A"),
+        "package_name":     f"Hotel: {context.get('selected_hotel', 'N/A')}",
+        "package_id":       ref,
+        "package_price":    context.get("price_details", {}).get("grand_total", "N/A"),
         "per_person_price": "N/A",
-        "travel_dates":    f"{state.context.get('check_in')} → {state.context.get('check_out')}",
-        "travellers":      state.context.get("guests", "N/A"),
-        "destinations":    state.context.get("destination", "N/A"),
+        "travel_dates":     f"{context.get('check_in')} → {context.get('check_out')}",
+        "travellers":       context.get("guests", "N/A"),
+        "destinations":     context.get("destination", "N/A"),
     }
+
+    admin_email = context.get("partner_email")
+    logger.info(f"📧 Sending booking email to: {admin_email}")
+
     send_admin_booking_alert(
         booking_details=booking_details,
         customer_phone=phone,
-        admin_email=state.get("partner_email"),   
+        admin_email=admin_email,
     )
 
     reset_fn(phone, business_phone, state)

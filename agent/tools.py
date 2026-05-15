@@ -105,18 +105,46 @@ class TravelTools:
 
             hotels = selected.get("hotels", [])
             filtered = []
+            
+            # Log for debugging
+            logger.info(f"🔍 Searching for {category} hotels in: {location}")
+            
             for hotel in hotels:
-                if not location or location.lower() in hotel.get("location", "").lower():
+                hotel_location = hotel.get("location", "").strip()
+                hotel_name = hotel.get("name", "Unknown")
+                
+                logger.info(f"   Checking: {hotel_name} | Location: '{hotel_location}'")
+                
+                # EXACT location matching (case-insensitive)
+                if location:
+                    # Only include if hotel location EXACTLY matches user's location
+                    if hotel_location.lower() == location.lower():
+                        logger.info(f"   ✅ MATCH: {hotel_name} is in {location}")
+                        filtered.append({
+                            "name": hotel.get("name", "").split(",")[0],
+                            "full_name": hotel.get("name"),
+                            "location": hotel_location,
+                            "image": hotel.get("image"),
+                            "description": hotel.get("description", "")[:300],
+                            "category": category,
+                            "original_data": hotel
+                        })
+                    else:
+                        logger.info(f"   ❌ SKIP: {hotel_name} is in {hotel_location}, not {location}")
+                else:
+                    # No location filter - return all hotels
                     filtered.append({
                         "name": hotel.get("name", "").split(",")[0],
                         "full_name": hotel.get("name"),
-                        "location": hotel.get("location"),
+                        "location": hotel_location,
                         "image": hotel.get("image"),
                         "description": hotel.get("description", "")[:300],
                         "category": category,
                         "original_data": hotel
                     })
 
+            logger.info(f"📊 Returning {len(filtered)} hotels for {category} in {location}")
+            
             return {
                 "success": True,
                 "category": category,
