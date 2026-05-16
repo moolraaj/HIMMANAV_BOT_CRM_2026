@@ -368,6 +368,23 @@ def card_pkg_summary(context: Dict) -> Dict:
     check_in  = pd.get("check_in",  context.get("check_in",  ""))
     check_out = pd.get("check_out", context.get("check_out", ""))
     dest      = context.get("destination", "")
+    
+    # Get hotel category and room category from context
+    hotel_category = context.get("hotel_category", "")
+    room_category = context.get("room_category", "")
+
+    # Build hotel found status by location
+    hotel_found_status = {}
+    for hc in hotel_costs:
+        loc = hc.get("location", "")
+        h_total = hc.get("hotel_total", 0)
+        price_room = hc.get("price_per_room", 0)
+        rooms_n = hc.get("rooms_needed", 0)
+        # Mark if hotel was actually found
+        if price_room > 0 or rooms_n > 0 or h_total > 0:
+            hotel_found_status[loc] = True
+        else:
+            hotel_found_status[loc] = False
 
     # Build season-name lookup by location
     season_by_location = {}
@@ -394,8 +411,8 @@ def card_pkg_summary(context: Dict) -> Dict:
 
     # ── Package Details ───────────────────────────────────────────
     content += _section_header("Package Details")
-    content += _row("Hotel Category", context.get("hotel_category", ""))
-    content += _row("Room Category",  context.get("room_category", ""))
+    content += _row("Hotel Category", hotel_category)
+    content += _row("Room Category",  room_category)
     if vehicle_price > 0:
         content += _row("Vehicle", f"{vehicle_name}  ({fp(vehicle_per_day)}/day)")
         if vehicle_season and vehicle_season not in ("Regular Rate", ""):
@@ -411,8 +428,20 @@ def card_pkg_summary(context: Dict) -> Dict:
         title      = day.get("title", "")
         loc        = day.get("stay_location") or day.get("location", dest)
         season     = season_by_location.get(loc, "")
-        hotel_name = selected_hotels.get(loc, context.get("hotel_category", "Hotel"))
         ev         = embedded_by_day.get(day_label)
+        
+        # Determine hotel display name for this day
+        hotel_display = selected_hotels.get(loc, "")
+        
+        # If no hotel found for this location, show category instead
+        if hotel_display and hotel_display != f"{hotel_category} Hotel":
+            # Hotel was found
+            pass
+        elif loc and hotel_found_status.get(loc) == False:
+            # No hotel found - show selected category
+            hotel_display = f"⚠️ No hotel found ({hotel_category} - {room_category})"
+        elif loc and not hotel_display:
+            hotel_display = f"{hotel_category} Hotel ({room_category})"
 
         content += f"*{day_label}:* {title}\n"
 
@@ -426,7 +455,8 @@ def card_pkg_summary(context: Dict) -> Dict:
             # Normal stay day
             if loc:
                 content += f"  *Location:* {loc}\n"
-                content += f"  *Hotel:* {hotel_name}\n"
+                if hotel_display:
+                    content += f"  *Hotel:* {hotel_display}\n"
                 if season and season != "N/A":
                     content += f"  *Season:* {season}\n"
             if day.get("vehicle_include") == "Yes":
@@ -450,12 +480,20 @@ def card_pkg_summary(context: Dict) -> Dict:
             h_total    = hc.get("hotel_total", 0)
             loc_nights = hc.get("nights", nights)
 
-            content += f"*{loc} — {h_name}*\n"
-            content += f"  Season: {season_nm}\n"
-            content += f"  Rs.{int(price_room):,}/night × {rooms_n} room(s) × {loc_nights} nights"
-            if extra_p > 0:
-                content += f" + {extra_p} extra person(s) @ Rs.{int(extra_pr):,}/night"
-            content += f" = *{fp(h_total)}*\n"
+            # Check if hotel was actually found (no price and no rooms)
+            if price_room == 0 and rooms_n == 0 and h_total == 0:
+                # Show that no hotel was found for this location
+                content += f"*{loc}*\n"
+                content += f"  ⚠️ *No hotel found* with selected category\n"
+                content += f"  *Selected:* {hotel_category} - {room_category}\n"
+                content += f"  *Total Cost:* {fp(0)}\n"
+            else:
+                content += f"*{loc} — {h_name}*\n"
+                content += f"  Season: {season_nm}\n"
+                content += f"  Rs.{int(price_room):,}/night × {rooms_n} room(s) × {loc_nights} nights"
+                if extra_p > 0:
+                    content += f" + {extra_p} extra person(s) @ Rs.{int(extra_pr):,}/night"
+                content += f" = *{fp(h_total)}*\n"
         content += "\n"
 
     content += _row("Total Hotel Cost", fp(total_hotel))
@@ -494,6 +532,7 @@ def card_pkg_summary(context: Dict) -> Dict:
         "buttons": [
             {"text": "BOOK NOW",       "value": "pkg_book_now"},
             {"text": "Change Vehicle", "value": "pkg_change_vehicle"},
+            {"text": "Change Hotel",   "value": "pkg_change_hotel"},
         ],
     }
 
