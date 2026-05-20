@@ -225,6 +225,7 @@ class TravelTools:
                     "cp_price": int(selected.get("meal_plan", {}).get("cp_price", 0)),
                     "ep_price": 0
                 },
+                "tax": selected.get("tax", "0"),
                 "rooms": formatted_rooms,
                 "total_rooms": len(formatted_rooms),
                 "hotel_gallery": selected.get("gallery", []),

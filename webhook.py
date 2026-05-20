@@ -380,5 +380,6 @@ if __name__ == '__main__':
         port=5000,
         host='0.0.0.0',
         debug=False,
-        use_reloader=False      # FIX: reloader causes duplicate threads
+        use_reloader=False,
+        allow_unsafe_werkzeug=True
     )

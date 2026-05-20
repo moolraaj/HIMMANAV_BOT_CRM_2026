@@ -18,4 +18,5 @@ jinja2
 pdfkit
 requests
 pillow
-
+openai
+weasyprint           

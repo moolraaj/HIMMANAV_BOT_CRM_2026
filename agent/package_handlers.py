@@ -447,6 +447,7 @@ def calculate_and_show_price(context: Dict, tools: TravelTools, state) -> Dict:
             "selected_hotels":         selected_hotels,
             "check_in":                check_in_str,
             "check_out":               check_out_str,
+            "tax":                     pkg.get("tax", "0"),
         }
         context["step"] = "pkg_show_itinerary"
         save_context(state, context)

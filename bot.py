@@ -1,5 +1,4 @@
 # bot.py
-import os
 import copy
 from dotenv import load_dotenv
 from agent.ai_agent import AIHotelAgent
@@ -15,14 +14,33 @@ def process_message(user_input: str, phone: str, state: dict,
         return {"type": "text", "content": "Hi! Are you looking for hotels or travel packages?"}
 
     display_phone = _resolve_display_phone(sender_phone_number_id)
-    response = _agent.execute(phone, user_input, state, business_phone=display_phone)
-
-    # Persist session context back into state so it survives across requests
-    session_key = f"{display_phone}:{phone}"
-    if session_key in _agent.sessions:
-        state["data"] = copy.deepcopy(_agent.sessions[session_key].get("context", {}))
-
-    return response
+    
+    try:
+        response = _agent.execute(phone, user_input, state, business_phone=display_phone)
+        
+      
+        session_key = f"{display_phone}:{phone}"
+        if session_key in _agent.sessions:
+            state["data"] = copy.deepcopy(_agent.sessions[session_key].get("context", {}))
+        
+        return response
+        
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ Bot error for {phone}: {e}")
+        traceback.print_exc()
+        
+        
+        return {
+            "type": "buttons",
+            "content": "⚠️ *Something went wrong!*\n\nPlease choose an option:",
+            "buttons": [
+                {"text": "🔄 Retry", "value": "retry_action"},
+                {"text": "❌ Exit to Main Menu", "value": "exit_booking"},
+            ]
+        }
 
 
 def _resolve_display_phone(sender_phone_number_id: str) -> str:

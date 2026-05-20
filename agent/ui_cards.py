@@ -283,7 +283,20 @@ def card_hotel_summary(context: Dict) -> Dict:
     content += _row("Meal Plan", meal.get("meal_name", "No meals"))
     content += _row("Meal Cost", f"Rs.{meal.get('total_meal_price', 0):,.0f}")
     content += "\n"
-    content += f"*GRAND TOTAL:  Rs.{grand_total:,.0f}*\n\n"
+    content += f"*Grand Total:  Rs.{grand_total:,.0f}*\n"
+
+     
+    tax_rate    = float(str(context.get("hotel_tax", "0")).replace("%", "") or 0)
+    tax_amount  = round(grand_total * tax_rate / 100)
+    final_total = grand_total + tax_amount
+
+    if tax_rate > 0:
+        content += _row(f"GST ({int(tax_rate)}%)", f"Rs.{tax_amount:,.0f}")
+        content += "\n"
+        content += f"*TOTAL PAYABLE:  Rs.{final_total:,.0f}*\n\n"
+    else:
+        content += f"*TOTAL PAYABLE:  Rs.{grand_total:,.0f}*\n\n"
+
     content += "\nPlease confirm your booking"
 
     return {
@@ -514,13 +527,25 @@ def card_pkg_summary(context: Dict) -> Dict:
                 ev_line += f"  _(Season: {ev['season_name']})_"
             content += _row(f"{ev['day']} Transport ({ev['name']})", ev_line)
 
+     
     if package_margin > 0:
         content += _row("Service Charge", fp(package_margin))
 
     content += "\n"
-    content += f"*GRAND TOTAL:  {fp(total_price)}*\n\n"
+    content += f"*Grand Total:  {fp(total_price)}*\n"
 
-    # ── Action Cards ──────────────────────────────────────────────
+    tax_rate    = float(str(pd.get("tax", "0")).replace("%", "") or 0)
+    tax_amount  = round(total_price * tax_rate / 100)
+    final_total = total_price + tax_amount
+
+    if tax_rate > 0:
+        content += _row(f"GST ({int(tax_rate)}%)", fp(tax_amount))
+        content += "\n"
+        content += f"*TOTAL PAYABLE:  {fp(final_total)}*\n\n"
+    else:
+        content += f"*TOTAL PAYABLE:  {fp(total_price)}*\n\n"
+
+     
     card_summary = {
         "type": "text",
         "content": content,

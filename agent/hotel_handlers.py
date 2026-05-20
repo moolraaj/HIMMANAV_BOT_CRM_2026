@@ -63,6 +63,7 @@ def handle_view_rooms(hotel_name: str, context: Dict, tools: TravelTools, state,
     if result.get("success") and result.get("rooms"):
         context["rooms_list"]     = result.get("rooms", [])
         context["meal_plan_data"] = result.get("meal_plan", {})
+        context["hotel_tax"]      = result.get("tax", "0")
         context["step"]           = "show_rooms"
         save_context(state, context)
         return format_rooms(context)
@@ -211,4 +212,4 @@ def handle_change_city(context: Dict, state) -> Dict:
         context[k] = None
     context["step"] = "collect_info"
     save_context(state, context)
-    return {"type": "text", "content": "📍 Which city would you like to search hotels in?"}
+    return {"type": "text", "content": "Which city would you like to search hotels in?"}

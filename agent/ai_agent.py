@@ -41,7 +41,7 @@ logger.setLevel(logging.INFO)
 class AIHotelAgent:
 
     def __init__(self):
-        self.client          = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
+        self.client          = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.sessions: Dict  = {}
         self.available_tools = TOOL_DEFINITIONS
         logger.info("=" * 60)

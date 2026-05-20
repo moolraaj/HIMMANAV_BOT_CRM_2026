@@ -204,7 +204,15 @@ def process_incoming_message(message_data, sender_phone_number_id=None, emit_fn=
         print("❌ Bot error:", e)
         import traceback
         traceback.print_exc()
-        response = {"type": "text", "content": "⚠️ Something went wrong, please try again."}
+        response = {
+        "type": "buttons",
+        "content": "⚠️ *Something went wrong!*\n\nPlease choose an option:",
+        "buttons": [
+            {"text": "🔄 Retry", "value": "retry_action"},
+            {"text": "❌ Exit to Main Menu", "value": "exit_booking"},
+        ]
+    }
+
 
     # Save bot response to DB
     serialized = _serialize_response(response)
